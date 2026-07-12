@@ -8,6 +8,9 @@ import (
 	"net/http"
 	"time"
 
+	"family-torrserver/internal/cinemeta"
+	"family-torrserver/internal/prowlarr"
+	"family-torrserver/internal/resolver"
 	"family-torrserver/internal/settings"
 	"family-torrserver/internal/store"
 
@@ -17,14 +20,22 @@ import (
 
 // Server holds shared dependencies for the HTTP handlers.
 type Server struct {
-	set   *settings.Settings
-	store *store.Store
-	http  *http.Server
+	set      *settings.Settings
+	store    *store.Store
+	resolver *resolver.Resolver
+	http     *http.Server
 }
 
-// New builds a Server with its router wired.
+// New builds a Server with its router and service clients wired.
 func New(set *settings.Settings, st *store.Store) *Server {
-	s := &Server{set: set, store: st}
+	cine := cinemeta.New(set.CinemetaURL, st, set.CinemetaCacheTTL)
+	prow := prowlarr.New(set.ProwlarrURL, set.ProwlarrAPIKey, st, set.ProwlarrCacheTTL, set.ProwlarrInsecureTLS)
+
+	s := &Server{
+		set:      set,
+		store:    st,
+		resolver: resolver.New(cine, prow),
+	}
 	s.http = &http.Server{
 		Addr:              ":" + set.Port,
 		Handler:           s.routes(),
@@ -61,6 +72,8 @@ func (s *Server) routes() http.Handler {
 // Run starts the server and blocks until ctx is cancelled, then shuts down
 // gracefully.
 func (s *Server) Run(ctx context.Context) error {
+	go s.purgeCacheLoop(ctx)
+
 	errCh := make(chan error, 1)
 	go func() {
 		log.Printf("addon listening on %s", s.http.Addr)
@@ -79,6 +92,25 @@ func (s *Server) Run(ctx context.Context) error {
 		defer cancel()
 		log.Printf("shutting down...")
 		return s.http.Shutdown(shutdownCtx)
+	}
+}
+
+// purgeCacheLoop periodically reclaims expired cache rows (lazy-expire on read
+// handles correctness; this bounds table growth).
+func (s *Server) purgeCacheLoop(ctx context.Context) {
+	ticker := time.NewTicker(1 * time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if n, err := s.store.PurgeExpiredCache(); err != nil {
+				log.Printf("cache purge error: %v", err)
+			} else if n > 0 {
+				log.Printf("purged %d expired cache rows", n)
+			}
+		}
 	}
 }
 

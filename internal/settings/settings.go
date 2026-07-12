@@ -12,34 +12,36 @@ import (
 
 // Settings is the fully-resolved process configuration.
 type Settings struct {
-	Port              string
-	PublicHost        string // may be empty; server falls back to request Host
-	TorrServerURL     string
-	ProwlarrURL       string
-	ProwlarrAPIKey    string
-	CinemetaURL       string
-	DBPath            string
-	SigningSecret     string
-	PlayURLTTL        time.Duration
-	ProwlarrCacheTTL  time.Duration
-	CinemetaCacheTTL  time.Duration
-	TorrServerPreload bool
-	TorrentIdleTTL    time.Duration
+	Port                string
+	PublicHost          string // may be empty; server falls back to request Host
+	TorrServerURL       string
+	ProwlarrURL         string
+	ProwlarrAPIKey      string
+	ProwlarrInsecureTLS bool
+	CinemetaURL         string
+	DBPath              string
+	SigningSecret       string
+	PlayURLTTL          time.Duration
+	ProwlarrCacheTTL    time.Duration
+	CinemetaCacheTTL    time.Duration
+	TorrServerPreload   bool
+	TorrentIdleTTL      time.Duration
 }
 
 // Load reads settings from the environment, applying defaults from §4 and
 // failing fast when a required value is missing or left at a placeholder.
 func Load() (*Settings, error) {
 	s := &Settings{
-		Port:              getenv("PORT", "7000"),
-		PublicHost:        os.Getenv("PUBLIC_HOST"),
-		TorrServerURL:     getenv("TORRSERVER_URL", "http://127.0.0.1:8090"),
-		ProwlarrURL:       os.Getenv("PROWLARR_URL"),
-		ProwlarrAPIKey:    os.Getenv("PROWLARR_API_KEY"),
-		CinemetaURL:       getenv("CINEMETA_URL", "https://v3-cinemeta.strem.io"),
-		DBPath:            getenv("DB_PATH", "/data/addon/addon.db"),
-		SigningSecret:     os.Getenv("SIGNING_SECRET"),
-		TorrServerPreload: getbool("TORRSERVER_PRELOAD", true),
+		Port:                getenv("PORT", "7000"),
+		PublicHost:          os.Getenv("PUBLIC_HOST"),
+		TorrServerURL:       getenv("TORRSERVER_URL", "http://127.0.0.1:8090"),
+		ProwlarrURL:         os.Getenv("PROWLARR_URL"),
+		ProwlarrAPIKey:      os.Getenv("PROWLARR_API_KEY"),
+		ProwlarrInsecureTLS: getbool("PROWLARR_INSECURE_TLS", false),
+		CinemetaURL:         getenv("CINEMETA_URL", "https://v3-cinemeta.strem.io"),
+		DBPath:              getenv("DB_PATH", "/data/addon/addon.db"),
+		SigningSecret:       os.Getenv("SIGNING_SECRET"),
+		TorrServerPreload:   getbool("TORRSERVER_PRELOAD", true),
 	}
 
 	var err error

@@ -4,6 +4,7 @@ go 1.23
 
 require (
 	github.com/go-chi/chi/v5 v5.1.0
+	github.com/middelink/go-parse-torrent-name v0.0.0-20190301154245-3ff4efacd4c4
 	modernc.org/sqlite v1.34.1
 )
 

@@ -22,7 +22,7 @@ func TestDefaultRoundTrip(t *testing.T) {
 
 func TestNormalizeClampsAndFilters(t *testing.T) {
 	in := UserConfig{
-		Sort:             "bogus",              // -> quality
+		Sort:             "bogus",                         // -> quality
 		Resolutions:      []string{"1080p", "8k", "720p"}, // 8k dropped, order canonicalised
 		ExcludeQualities: []string{"cam", "nonsense"},     // nonsense dropped
 		PreferHEVC:       false,
