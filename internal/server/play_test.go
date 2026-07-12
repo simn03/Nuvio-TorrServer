@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"family-torrserver/internal/settings"
-	"family-torrserver/internal/sign"
-	"family-torrserver/internal/torrserver"
+	"nuvio-torrserver/internal/settings"
+	"nuvio-torrserver/internal/sign"
+	"nuvio-torrserver/internal/torrserver"
 
 	"github.com/go-chi/chi/v5"
 )

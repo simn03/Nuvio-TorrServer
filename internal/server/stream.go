@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"strings"
 
-	"family-torrserver/internal/rank"
+	"nuvio-torrserver/internal/rank"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -56,7 +56,7 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 			Name:  "Family TorrServer",
 			Title: streamTitle(rs.Candidate),
 			BehaviorHints: &streamBehaviorHints{
-				BingeGroup: "family-torrserver-" + rs.Candidate.Parsed.Resolution,
+				BingeGroup: "nuvio-torrserver-" + rs.Candidate.Parsed.Resolution,
 			},
 		})
 	}

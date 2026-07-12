@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"family-torrserver/internal/config"
+	"nuvio-torrserver/internal/config"
 )
 
 // GetConfig returns the user's stored config, or the defaults if no row exists

@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"family-torrserver/internal/config"
+	"nuvio-torrserver/internal/config"
 )
 
 // ErrNotFound is returned when a token has no matching user row.

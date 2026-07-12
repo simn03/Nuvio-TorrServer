@@ -10,8 +10,8 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"family-torrserver/internal/settings"
-	"family-torrserver/internal/store"
+	"nuvio-torrserver/internal/settings"
+	"nuvio-torrserver/internal/store"
 )
 
 // AddUser mints a token, then prints the full install URL for it.

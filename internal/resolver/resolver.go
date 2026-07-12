@@ -12,11 +12,11 @@ import (
 	"sync"
 	"time"
 
-	"family-torrserver/internal/cinemeta"
-	"family-torrserver/internal/config"
-	"family-torrserver/internal/prowlarr"
-	"family-torrserver/internal/rank"
-	"family-torrserver/internal/torrserver"
+	"nuvio-torrserver/internal/cinemeta"
+	"nuvio-torrserver/internal/config"
+	"nuvio-torrserver/internal/prowlarr"
+	"nuvio-torrserver/internal/rank"
+	"nuvio-torrserver/internal/torrserver"
 )
 
 // Resolver wires the metadata and search clients.

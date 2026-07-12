@@ -52,7 +52,7 @@ CLI writes to the same SQLite file the server reads (`DB_PATH`), so admin ops ta
 ## 3. Project layout
 
 ```
-family-torrserver/
+nuvio-torrserver/
 ├── cmd/addon/main.go            # subcommand dispatch
 ├── internal/
 │   ├── server/
@@ -326,7 +326,7 @@ Caddy reverse-proxies only the addon; TorrServer's 8090 stays internal:
 
 ```
 torrserver.example.com {
-    reverse_proxy family-torrserver:7000
+    reverse_proxy nuvio-torrserver:7000
 }
 ```
 
@@ -337,7 +337,7 @@ Cloudflare WAF rule restricting the hostname to the operator's country/ASN.
 Add a family member:
 
 ```bash
-docker exec family-torrserver /app/addon adduser --name "Mom"
+docker exec nuvio-torrserver /app/addon adduser --name "Mom"
 # prints: https://torrserver.example.com/u/<token>/manifest.json
 ```
 

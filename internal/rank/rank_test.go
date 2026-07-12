@@ -3,8 +3,8 @@ package rank
 import (
 	"testing"
 
-	"family-torrserver/internal/config"
-	"family-torrserver/internal/prowlarr"
+	"nuvio-torrserver/internal/config"
+	"nuvio-torrserver/internal/prowlarr"
 )
 
 func TestParseSampleTitles(t *testing.T) {

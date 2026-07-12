@@ -3,7 +3,7 @@ package resolver
 import (
 	"testing"
 
-	"family-torrserver/internal/torrserver"
+	"nuvio-torrserver/internal/torrserver"
 )
 
 func TestSelectFileSeriesEpisodeMatch(t *testing.T) {

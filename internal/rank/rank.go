@@ -8,8 +8,8 @@ import (
 	"sort"
 	"strings"
 
-	"family-torrserver/internal/config"
-	"family-torrserver/internal/prowlarr"
+	"nuvio-torrserver/internal/config"
+	"nuvio-torrserver/internal/prowlarr"
 
 	ptn "github.com/middelink/go-parse-torrent-name"
 )

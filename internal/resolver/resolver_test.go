@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"family-torrserver/internal/cinemeta"
-	"family-torrserver/internal/config"
-	"family-torrserver/internal/prowlarr"
+	"nuvio-torrserver/internal/cinemeta"
+	"nuvio-torrserver/internal/config"
+	"nuvio-torrserver/internal/prowlarr"
 )
 
 // fakeCache satisfies both cinemeta.Cache and prowlarr.Cache with no caching

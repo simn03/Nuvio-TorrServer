@@ -1,11 +1,11 @@
 # Copy to docker-compose.yml and adjust the network name to match wherever your
 # Prowlarr already runs, so "http://prowlarr:9696" resolves.
 services:
-  family-torrserver:
+  nuvio-torrserver:
     build: .
     # Or use a prebuilt image instead of build:
-    # image: ghcr.io/youruser/family-torrserver:latest
-    container_name: family-torrserver
+    # image: ghcr.io/youruser/nuvio-torrserver:latest
+    container_name: nuvio-torrserver
     restart: unless-stopped
     env_file: .env
     ports:

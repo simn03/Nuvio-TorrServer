@@ -31,7 +31,7 @@ Stremio ──TLS──> reverse proxy ──> addon :7000 ──┬─> Prowlar
 ## Quick start
 
 ```bash
-git clone <this-repo> && cd family-torrserver
+git clone <this-repo> && cd nuvio-torrserver
 cp .env.example .env
 # edit .env — set SIGNING_SECRET, PROWLARR_URL, PROWLARR_API_KEY, PUBLIC_HOST
 openssl rand -base64 32   # use this for SIGNING_SECRET
@@ -53,7 +53,7 @@ Only the addon (`:7000`) is proxied; TorrServer's `8090` stays internal.
 
 ```
 torrserver.example.com {
-    reverse_proxy family-torrserver:7000
+    reverse_proxy nuvio-torrserver:7000
 }
 ```
 
@@ -64,7 +64,7 @@ a Cloudflare WAF rule restricting the hostname to your country/ASN.
 ## Adding a family member
 
 ```bash
-docker exec family-torrserver /app/addon adduser --name "Mom"
+docker exec nuvio-torrserver /app/addon adduser --name "Mom"
 # prints: Install URL: https://torrserver.example.com/u/<token>/manifest.json
 ```
 

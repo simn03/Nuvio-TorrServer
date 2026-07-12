@@ -10,10 +10,10 @@ import (
 	"os/signal"
 	"syscall"
 
-	"family-torrserver/admin"
-	"family-torrserver/internal/server"
-	"family-torrserver/internal/settings"
-	"family-torrserver/internal/store"
+	"nuvio-torrserver/admin"
+	"nuvio-torrserver/internal/server"
+	"nuvio-torrserver/internal/settings"
+	"nuvio-torrserver/internal/store"
 )
 
 func main() {

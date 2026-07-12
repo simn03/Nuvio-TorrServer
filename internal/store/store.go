@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 
-	"family-torrserver/migrations"
+	"nuvio-torrserver/migrations"
 
 	_ "modernc.org/sqlite" // pure-Go driver, CGO_ENABLED=0
 )

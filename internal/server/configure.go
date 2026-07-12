@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"family-torrserver/internal/config"
+	"nuvio-torrserver/internal/config"
 
 	"github.com/go-chi/chi/v5"
 )

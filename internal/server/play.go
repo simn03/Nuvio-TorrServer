@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"time"
 
-	"family-torrserver/internal/sign"
+	"nuvio-torrserver/internal/sign"
 
 	"github.com/go-chi/chi/v5"
 )

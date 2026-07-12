@@ -1,4 +1,4 @@
-module family-torrserver
+module nuvio-torrserver
 
 go 1.23
 
