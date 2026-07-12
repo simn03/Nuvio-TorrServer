@@ -41,7 +41,7 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	candidates, err := s.resolver.Resolve(r.Context(), typ, id, cfg)
+	resolved, err := s.resolver.Resolve(r.Context(), typ, id, cfg)
 	if err != nil {
 		// Return an empty (valid) list rather than an error so Stremio shows
 		// "no streams" instead of failing the addon.
@@ -49,14 +49,14 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	streams := make([]stream, 0, len(candidates))
-	for _, c := range candidates {
+	streams := make([]stream, 0, len(resolved))
+	for _, rs := range resolved {
 		streams = append(streams, stream{
-			URL:   c.Result.Link(),
+			URL:   s.buildPlayURL(r, rs.Hash, rs.FileIndex),
 			Name:  "Family TorrServer",
-			Title: streamTitle(c),
+			Title: streamTitle(rs.Candidate),
 			BehaviorHints: &streamBehaviorHints{
-				BingeGroup: "family-torrserver-" + c.Parsed.Resolution,
+				BingeGroup: "family-torrserver-" + rs.Candidate.Parsed.Resolution,
 			},
 		})
 	}

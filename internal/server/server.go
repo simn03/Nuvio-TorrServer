@@ -12,7 +12,9 @@ import (
 	"family-torrserver/internal/prowlarr"
 	"family-torrserver/internal/resolver"
 	"family-torrserver/internal/settings"
+	"family-torrserver/internal/sign"
 	"family-torrserver/internal/store"
+	"family-torrserver/internal/torrserver"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -23,6 +25,9 @@ type Server struct {
 	set      *settings.Settings
 	store    *store.Store
 	resolver *resolver.Resolver
+	torr     *torrserver.Client
+	sweeper  *torrserver.Sweeper
+	signer   *sign.Signer
 	http     *http.Server
 }
 
@@ -30,11 +35,16 @@ type Server struct {
 func New(set *settings.Settings, st *store.Store) *Server {
 	cine := cinemeta.New(set.CinemetaURL, st, set.CinemetaCacheTTL)
 	prow := prowlarr.New(set.ProwlarrURL, set.ProwlarrAPIKey, st, set.ProwlarrCacheTTL, set.ProwlarrInsecureTLS)
+	torr := torrserver.New(set.TorrServerURL)
+	sweeper := torrserver.NewSweeper(torr, set.TorrentIdleTTL)
 
 	s := &Server{
 		set:      set,
 		store:    st,
-		resolver: resolver.New(cine, prow),
+		resolver: resolver.New(cine, prow, torr, sweeper, set.TorrServerPreload),
+		torr:     torr,
+		sweeper:  sweeper,
+		signer:   sign.New(set.SigningSecret),
 	}
 	s.http = &http.Server{
 		Addr:              ":" + set.Port,
@@ -66,6 +76,9 @@ func (s *Server) routes() http.Handler {
 		r.Get("/stream/{type}/{id}.json", s.handleStream)
 	})
 
+	// Signed play proxy — not under /u/*; guarded by HMAC + expiry.
+	r.Get("/play/{hash}/{idx}", s.handlePlay)
+
 	return r
 }
 
@@ -73,6 +86,7 @@ func (s *Server) routes() http.Handler {
 // gracefully.
 func (s *Server) Run(ctx context.Context) error {
 	go s.purgeCacheLoop(ctx)
+	go s.sweeper.Run(ctx)
 
 	errCh := make(chan error, 1)
 	go func() {

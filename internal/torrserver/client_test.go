@@ -1,0 +1,90 @@
+package torrserver
+
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+)
+
+// mockTS emulates the subset of TorrServer's /torrents API we use.
+func mockTS(t *testing.T, files []File) (*httptest.Server, *[]string) {
+	t.Helper()
+	var actions []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/torrents" {
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+		body, _ := io.ReadAll(r.Body)
+		var req map[string]any
+		_ = json.Unmarshal(body, &req)
+		action, _ := req["action"].(string)
+		actions = append(actions, action)
+		switch action {
+		case "add", "get":
+			_ = json.NewEncoder(w).Encode(torrent{Hash: "deadbeef", Title: "X", FileStats: files})
+		case "rem":
+			// empty body, 200
+		default:
+			http.Error(w, "bad action", http.StatusBadRequest)
+		}
+	}))
+	return srv, &actions
+}
+
+func TestClientAddGetRemove(t *testing.T) {
+	files := []File{{ID: 1, Path: "a.srt", Length: 10}, {ID: 2, Path: "movie.mkv", Length: 999}}
+	srv, actions := mockTS(t, files)
+	defer srv.Close()
+	c := New(srv.URL)
+
+	hash, got, err := c.Add(context.Background(), "magnet:?xt=urn:btih:deadbeef")
+	if err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	if hash != "deadbeef" || len(got) != 2 || got[1].ID != 2 {
+		t.Fatalf("add returned hash=%s files=%+v", hash, got)
+	}
+
+	gf, err := c.Files(context.Background(), hash)
+	if err != nil || len(gf) != 2 {
+		t.Fatalf("files: %v %+v", err, gf)
+	}
+
+	if err := c.Remove(context.Background(), hash); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+	if strings.Join(*actions, ",") != "add,get,rem" {
+		t.Errorf("actions = %v, want add,get,rem", *actions)
+	}
+}
+
+func TestEnsureFilesGivesUp(t *testing.T) {
+	srv, _ := mockTS(t, nil) // always empty file list
+	defer srv.Close()
+	c := New(srv.URL)
+	start := time.Now()
+	files, err := c.EnsureFiles(context.Background(), "deadbeef", 300*time.Millisecond)
+	if err != nil {
+		t.Fatalf("ensure: %v", err)
+	}
+	if len(files) != 0 {
+		t.Fatalf("expected empty file list")
+	}
+	if time.Since(start) < 250*time.Millisecond {
+		t.Errorf("EnsureFiles returned too early; should have polled to the deadline")
+	}
+}
+
+func TestStreamURL(t *testing.T) {
+	c := New("http://127.0.0.1:8090/")
+	got := c.StreamURL("abc def", 6)
+	want := "http://127.0.0.1:8090/stream/stream?link=abc+def&index=6&play"
+	if got != want {
+		t.Errorf("StreamURL = %q, want %q", got, want)
+	}
+}

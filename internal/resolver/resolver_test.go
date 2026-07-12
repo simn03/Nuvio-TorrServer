@@ -63,10 +63,11 @@ func TestResolveMovie(t *testing.T) {
 	r := New(
 		cinemeta.New(cine.URL, fakeCache{}, time.Hour),
 		prowlarr.New(prow.URL, "k", fakeCache{}, time.Hour, false),
+		nil, nil, false,
 	)
 
 	cfg := config.Default() // excludes cam+ts, quality sort, min seeders 3
-	got, err := r.Resolve(context.Background(), "movie", "tt0133093", cfg)
+	got, _, err := r.Candidates(context.Background(), "movie", "tt0133093", cfg)
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
@@ -104,9 +105,10 @@ func TestResolveSeriesIssuesEpisodeAndPackQueries(t *testing.T) {
 	r := New(
 		cinemeta.New(cine.URL, fakeCache{}, time.Hour),
 		prowlarr.New(prow.URL, "k", fakeCache{}, time.Hour, false),
+		nil, nil, false,
 	)
 
-	got, err := r.Resolve(context.Background(), "series", "tt1234567:2:5", config.Default())
+	got, _, err := r.Candidates(context.Background(), "series", "tt1234567:2:5", config.Default())
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
@@ -155,8 +157,9 @@ func TestResolveSeriesPartialFailureStillReturns(t *testing.T) {
 	r := New(
 		cinemeta.New(cine.URL, fakeCache{}, time.Hour),
 		prowlarr.New(prow.URL, "k", fakeCache{}, time.Hour, false),
+		nil, nil, false,
 	)
-	got, err := r.Resolve(context.Background(), "series", "tt1234567:2:5", config.Default())
+	got, _, err := r.Candidates(context.Background(), "series", "tt1234567:2:5", config.Default())
 	if err != nil {
 		t.Fatalf("resolve should tolerate one failed query, got: %v", err)
 	}
@@ -181,8 +184,9 @@ func TestResolveDropsNonTorrent(t *testing.T) {
 	r := New(
 		cinemeta.New(cine.URL, fakeCache{}, time.Hour),
 		prowlarr.New(prow.URL, "k", fakeCache{}, time.Hour, false),
+		nil, nil, false,
 	)
-	got, err := r.Resolve(context.Background(), "movie", "tt1", config.Default())
+	got, _, err := r.Candidates(context.Background(), "movie", "tt1", config.Default())
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}

@@ -47,18 +47,60 @@ type Result struct {
 // Link returns the best add-link for TorrServer. Order matters: a magnet or a
 // magnet synthesised from the infohash lets TorrServer add directly, whereas
 // downloadUrl is a Prowlarr-proxied .torrent URL (embeds Prowlarr's API key and
-// requires TorrServer to fetch through Prowlarr), so it's the last resort.
+// requires TorrServer to fetch through Prowlarr — which fails if Prowlarr uses
+// an untrusted TLS cert), so it's the last resort.
 func (r Result) Link() string {
-	switch {
-	case r.MagnetURL != "":
+	if r.MagnetURL != "" {
 		return r.MagnetURL
-	case r.InfoHash != "":
-		return "magnet:?xt=urn:btih:" + r.InfoHash
-	case r.DownloadURL != "":
-		return r.DownloadURL
-	default:
-		return ""
 	}
+	if ih := NormalizeInfoHash(r.InfoHash); ih != "" {
+		return "magnet:?xt=urn:btih:" + ih
+	}
+	if r.DownloadURL != "" {
+		return r.DownloadURL
+	}
+	return ""
+}
+
+// NormalizeInfoHash returns a valid BitTorrent v1 infohash (40 lowercase hex or
+// 32 base32) or "" if it can't. Some Prowlarr indexers return the infohash
+// double-hex-encoded (80 hex chars that decode to the real 40-hex string); this
+// unwraps that case.
+func NormalizeInfoHash(s string) string {
+	s = strings.TrimSpace(s)
+	switch {
+	case len(s) == 40 && isHex(s):
+		return strings.ToLower(s)
+	case len(s) == 32 && isBase32(s):
+		return strings.ToUpper(s)
+	case len(s) == 80 && isHex(s):
+		// Hex-of-ascii: decode once and re-check for a 40-hex string.
+		if b, err := hex.DecodeString(s); err == nil {
+			inner := strings.TrimSpace(string(b))
+			if len(inner) == 40 && isHex(inner) {
+				return strings.ToLower(inner)
+			}
+		}
+	}
+	return ""
+}
+
+func isHex(s string) bool {
+	for _, c := range s {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			return false
+		}
+	}
+	return true
+}
+
+func isBase32(s string) bool {
+	for _, c := range s {
+		if !((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '2' && c <= '7')) {
+			return false
+		}
+	}
+	return true
 }
 
 // Client queries Prowlarr's search API.
