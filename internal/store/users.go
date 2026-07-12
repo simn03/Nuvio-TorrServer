@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"family-torrserver/internal/config"
 )
 
 // ErrNotFound is returned when a token has no matching user row.
@@ -40,6 +42,11 @@ func (s *Store) CreateUser(name string) (string, error) {
 	)
 	if err != nil {
 		return "", fmt.Errorf("insert user: %w", err)
+	}
+	// Seed default config (§7). GetConfig also falls back to defaults, so this
+	// is a convenience so the row exists and is editable immediately.
+	if err := s.SetConfig(token, config.Default()); err != nil {
+		return "", fmt.Errorf("seed config: %w", err)
 	}
 	return token, nil
 }

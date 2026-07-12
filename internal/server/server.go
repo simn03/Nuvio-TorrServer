@@ -50,6 +50,8 @@ func (s *Server) routes() http.Handler {
 	r.Route("/u/{token}", func(r chi.Router) {
 		r.Use(s.requireToken)
 		r.Get("/manifest.json", s.handleManifest)
+		r.Get("/configure", s.handleConfigureGet)
+		r.Post("/configure", s.handleConfigurePost)
 		r.Get("/stream/{type}/{id}.json", s.handleStream)
 	})
 
