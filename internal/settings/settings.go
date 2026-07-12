@@ -74,6 +74,22 @@ func Load() (*Settings, error) {
 	return s, nil
 }
 
+// AdminSettings is the minimal config the CLI subcommands need. Admin ops run
+// via `docker exec` and must not require the serve-only secrets (Prowlarr /
+// signing), so they use this loader instead of Load.
+type AdminSettings struct {
+	DBPath     string
+	PublicHost string
+}
+
+// LoadAdmin reads only the settings the admin CLI needs.
+func LoadAdmin() *AdminSettings {
+	return &AdminSettings{
+		DBPath:     getenv("DB_PATH", "/data/addon/addon.db"),
+		PublicHost: os.Getenv("PUBLIC_HOST"),
+	}
+}
+
 func isPlaceholder(v string) bool {
 	switch strings.ToLower(strings.TrimSpace(v)) {
 	case "changeme", "change-me", "default", "secret", "your-secret-here":

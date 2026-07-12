@@ -45,10 +45,12 @@ func (s *Server) routes() http.Handler {
 		_, _ = w.Write([]byte("ok"))
 	})
 
-	// Per-user routes. Token-validation middleware arrives in milestone 2;
-	// for now the manifest is served statically for any token.
+	// Per-user routes: every /u/* request is token-validated (403 on
+	// missing/revoked).
 	r.Route("/u/{token}", func(r chi.Router) {
+		r.Use(s.requireToken)
 		r.Get("/manifest.json", s.handleManifest)
+		r.Get("/stream/{type}/{id}.json", s.handleStream)
 	})
 
 	return r

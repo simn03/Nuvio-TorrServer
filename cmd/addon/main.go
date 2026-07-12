@@ -4,11 +4,13 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
 
+	"family-torrserver/admin"
 	"family-torrserver/internal/server"
 	"family-torrserver/internal/settings"
 	"family-torrserver/internal/store"
@@ -27,10 +29,21 @@ func main() {
 			fmt.Fprintf(os.Stderr, "serve: %v\n", err)
 			os.Exit(1)
 		}
-	case "adduser", "revoke", "listusers":
-		// Implemented in milestone 2 (admin package).
-		fmt.Fprintf(os.Stderr, "%q is not implemented yet (milestone 2)\n", sub)
-		os.Exit(1)
+	case "adduser":
+		if err := runAdduser(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "adduser: %v\n", err)
+			os.Exit(1)
+		}
+	case "revoke":
+		if err := runRevoke(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "revoke: %v\n", err)
+			os.Exit(1)
+		}
+	case "listusers":
+		if err := runListusers(); err != nil {
+			fmt.Fprintf(os.Stderr, "listusers: %v\n", err)
+			os.Exit(1)
+		}
 	case "-h", "--help", "help":
 		usage()
 	default:
@@ -57,6 +70,53 @@ func runServe() error {
 
 	srv := server.New(set, st)
 	return srv.Run(ctx)
+}
+
+// openAdminStore loads admin settings and opens the shared DB for CLI commands.
+func openAdminStore() (*store.Store, *settings.AdminSettings, error) {
+	set := settings.LoadAdmin()
+	st, err := store.Open(set.DBPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	return st, set, nil
+}
+
+func runAdduser(args []string) error {
+	fs := flag.NewFlagSet("adduser", flag.ContinueOnError)
+	name := fs.String("name", "", "display name for the user")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	st, set, err := openAdminStore()
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	return admin.AddUser(st, set, *name)
+}
+
+func runRevoke(args []string) error {
+	fs := flag.NewFlagSet("revoke", flag.ContinueOnError)
+	token := fs.String("token", "", "token to revoke")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	st, _, err := openAdminStore()
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	return admin.Revoke(st, *token)
+}
+
+func runListusers() error {
+	st, set, err := openAdminStore()
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	return admin.ListUsers(st, set)
 }
 
 func usage() {
