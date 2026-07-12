@@ -1,0 +1,36 @@
+# Copy to docker-compose.yml and adjust the network name to match wherever your
+# Prowlarr already runs, so "http://prowlarr:9696" resolves.
+services:
+  family-torrserver:
+    build: .
+    # Or use a prebuilt image instead of build:
+    # image: ghcr.io/youruser/family-torrserver:latest
+    container_name: family-torrserver
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      # Only the addon port is published. TorrServer's 8090 stays internal.
+      - "7000:7000"
+    volumes:
+      - addon-data:/data/addon
+      - torrserver-data:/data/torrserver
+      # Optional: only if PROWLARR_URL is HTTPS with a private CA. Mount the CA
+      # cert(s) so both the addon and TorrServer trust Prowlarr. Prefer using
+      # the internal http:// URL below instead, which needs none of this.
+      # - ./certs:/certs:ro
+    networks:
+      - media
+      # Join the existing network Prowlarr lives on (see below), then set
+      # PROWLARR_URL=http://prowlarr:9696 in .env — internal HTTP avoids all TLS
+      # trust issues and lets TorrServer fetch download links directly.
+
+volumes:
+  addon-data:
+  torrserver-data:
+
+networks:
+  # Reference the network your Prowlarr container is already attached to. If it
+  # was created by another compose project, mark it external:
+  media:
+    external: true
+    name: media

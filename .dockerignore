@@ -1,16 +1,12 @@
-# Secrets and local config
+.git
 .env
 docker-compose.yml
-
-# Local data
 *.db
 *.db-shm
 *.db-wal
 /data/
-
-# Build output
 /addon
 /out/
-
-# Editor/OS
+docs/
+*.md
 .DS_Store
