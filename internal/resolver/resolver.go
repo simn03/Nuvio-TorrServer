@@ -98,7 +98,7 @@ func (r *Resolver) Candidates(ctx context.Context, kind, id string, cfg config.U
 	}
 
 	queries, cats := buildQueries(meta, mid)
-	results, err := r.searchAll(ctx, queries, cats)
+	results, err := r.searchAll(ctx, queries, cats, cfg.Indexers)
 	if err != nil {
 		return nil, mid, err
 	}
@@ -203,7 +203,7 @@ func buildQueries(meta cinemeta.Meta, mid MediaID) ([]string, []int) {
 // out shouldn't discard a successful episode query); we only return an error if
 // every query fails. Note: errgroup is deliberately NOT used here, because its
 // context cancellation on first error would abort the sibling queries too.
-func (r *Resolver) searchAll(ctx context.Context, queries []string, cats []int) ([]prowlarr.Result, error) {
+func (r *Resolver) searchAll(ctx context.Context, queries []string, cats, indexerIds []int) ([]prowlarr.Result, error) {
 	perQuery := make([][]prowlarr.Result, len(queries))
 	errs := make([]error, len(queries))
 	var wg sync.WaitGroup
@@ -211,7 +211,7 @@ func (r *Resolver) searchAll(ctx context.Context, queries []string, cats []int) 
 		wg.Add(1)
 		go func(i int, q string) {
 			defer wg.Done()
-			res, err := r.prow.Search(ctx, q, cats)
+			res, err := r.prow.Search(ctx, q, cats, indexerIds)
 			if err != nil {
 				errs[i] = err
 				return

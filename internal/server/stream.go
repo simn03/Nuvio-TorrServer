@@ -53,7 +53,7 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	for _, rs := range resolved {
 		streams = append(streams, stream{
 			URL:   s.buildPlayURL(r, rs.Hash, rs.FileIndex),
-			Name:  "Family TorrServer",
+			Name:  streamName(rs.Candidate),
 			Title: streamTitle(rs.Candidate),
 			BehaviorHints: &streamBehaviorHints{
 				BingeGroup: "nuvio-torrserver-" + rs.Candidate.Parsed.Resolution,
@@ -71,24 +71,40 @@ func writeStreams(w http.ResponseWriter, streams []stream) {
 	_ = json.NewEncoder(w).Encode(streamResponse{Streams: streams})
 }
 
-// streamTitle builds a Torrentio-style, human-scannable title (§10).
+// streamName is the short left-column label: the addon plus the resolution.
+func streamName(c rank.Candidate) string {
+	if res := c.Parsed.Resolution; res != "" && res != "unknown" {
+		return "Nuvio\n" + res
+	}
+	return "Nuvio"
+}
+
+// streamTitle builds the detail shown for each result: the full release title,
+// a badge line, and the source indexer (§10, plus the per-user request to show
+// the full torrent name and where it came from).
 func streamTitle(c rank.Candidate) string {
-	var parts []string
+	lines := []string{c.Result.Title}
+
+	var badges []string
 	if c.Parsed.Resolution != "" && c.Parsed.Resolution != "unknown" {
-		parts = append(parts, c.Parsed.Resolution)
+		badges = append(badges, c.Parsed.Resolution)
 	}
 	if c.Parsed.Quality != "" {
-		parts = append(parts, c.Parsed.Quality)
+		badges = append(badges, c.Parsed.Quality)
 	}
 	if c.Parsed.IsHEVC {
-		parts = append(parts, "HEVC")
+		badges = append(badges, "HEVC")
 	}
-	line1 := strings.Join(parts, " ")
-	if line1 == "" {
-		line1 = c.Result.Title
+	meta := fmt.Sprintf("👤 %d · 💾 %s", c.Result.Seeders, humanSize(c.Result.Size))
+	if len(badges) > 0 {
+		meta = strings.Join(badges, " ") + " · " + meta
 	}
-	line2 := fmt.Sprintf("👤 %d  💾 %s", c.Result.Seeders, humanSize(c.Result.Size))
-	return line1 + "\n" + line2
+	lines = append(lines, meta)
+
+	if c.Result.Indexer != "" {
+		lines = append(lines, "🔎 "+c.Result.Indexer)
+	}
+	return strings.Join(lines, "\n")
 }
 
 func humanSize(b int64) string {

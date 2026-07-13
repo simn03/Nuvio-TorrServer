@@ -1,9 +1,11 @@
 package server
 
 import (
+	"context"
 	"html/template"
 	"net/http"
 	"strconv"
+	"time"
 
 	"nuvio-torrserver/internal/config"
 
@@ -18,10 +20,20 @@ type configPage struct {
 	// Resolutions/Excludable are rendered as checkbox rows with a checked flag.
 	Resolutions []checkboxItem
 	Excludable  []checkboxItem
+	// Indexers is the per-user indexer selection; IndexersAvailable is false when
+	// Prowlarr couldn't be reached to list them.
+	Indexers          []indexerItem
+	IndexersAvailable bool
 }
 
 type checkboxItem struct {
 	Value   string
+	Checked bool
+}
+
+type indexerItem struct {
+	ID      int
+	Name    string
 	Checked bool
 }
 
@@ -35,7 +47,7 @@ func (s *Server) handleConfigureGet(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to load config", http.StatusInternalServerError)
 		return
 	}
-	s.renderConfig(w, cfg, false)
+	s.renderConfig(r.Context(), w, cfg, false)
 }
 
 // handleConfigurePost validates the submitted form, persists it, and re-renders
@@ -55,6 +67,14 @@ func (s *Server) handleConfigurePost(w http.ResponseWriter, r *http.Request) {
 		MaxSizeGB:        parseFloat(r.FormValue("maxSizeGB"), 0),
 		MinSeeders:       parseInt(r.FormValue("minSeeders"), 3),
 		MaxResults:       parseInt(r.FormValue("maxResults"), 5),
+		Indexers:         parseInts(r.Form["indexers"]),
+	}
+	// The indexer fieldset only renders when Prowlarr is reachable. If it wasn't
+	// (marker absent), preserve the existing selection instead of wiping it.
+	if r.FormValue("indexers_present") != "1" {
+		if prev, err := s.store.GetConfig(token); err == nil {
+			cfg.Indexers = prev.Indexers
+		}
 	}
 	// Normalize (also done in SetConfig) so the re-render reflects the stored form.
 	cfg = config.Normalize(cfg)
@@ -63,21 +83,48 @@ func (s *Server) handleConfigurePost(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to save config", http.StatusInternalServerError)
 		return
 	}
-	s.renderConfig(w, cfg, true)
+	s.renderConfig(r.Context(), w, cfg, true)
 }
 
-func (s *Server) renderConfig(w http.ResponseWriter, cfg config.UserConfig, saved bool) {
+func (s *Server) renderConfig(ctx context.Context, w http.ResponseWriter, cfg config.UserConfig, saved bool) {
+	indexers, available := s.indexerItems(ctx, cfg.Indexers)
 	page := configPage{
-		Saved:       saved,
-		Config:      cfg,
-		Sorts:       config.AllSorts,
-		Resolutions: checkboxes(config.AllResolutions, cfg.Resolutions),
-		Excludable:  checkboxes(config.AllExcludable, cfg.ExcludeQualities),
+		Saved:             saved,
+		Config:            cfg,
+		Sorts:             config.AllSorts,
+		Resolutions:       checkboxes(config.AllResolutions, cfg.Resolutions),
+		Excludable:        checkboxes(config.AllExcludable, cfg.ExcludeQualities),
+		Indexers:          indexers,
+		IndexersAvailable: available,
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := configTmpl.Execute(w, page); err != nil {
 		http.Error(w, "template error", http.StatusInternalServerError)
 	}
+}
+
+// indexerItems fetches the enabled torrent indexers from Prowlarr and marks
+// which are selected. An empty selection means "all", so every box shows checked.
+func (s *Server) indexerItems(ctx context.Context, selected []int) ([]indexerItem, bool) {
+	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	list, err := s.prow.Indexers(ctx)
+	if err != nil {
+		return nil, false
+	}
+	sel := make(map[int]bool, len(selected))
+	for _, id := range selected {
+		sel[id] = true
+	}
+	all := len(selected) == 0
+	var items []indexerItem
+	for _, ix := range list {
+		if !ix.Enable || ix.Protocol != "torrent" {
+			continue
+		}
+		items = append(items, indexerItem{ID: ix.ID, Name: ix.Name, Checked: all || sel[ix.ID]})
+	}
+	return items, true
 }
 
 func checkboxes(all, selected []string) []checkboxItem {
@@ -99,6 +146,16 @@ func parseInt(s string, def int) int {
 	return def
 }
 
+func parseInts(ss []string) []int {
+	var out []int
+	for _, s := range ss {
+		if n, err := strconv.Atoi(s); err == nil {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
 func parseFloat(s string, def float64) float64 {
 	if f, err := strconv.ParseFloat(s, 64); err == nil {
 		return f
@@ -111,7 +168,7 @@ const configHTML = `<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Family TorrServer — Configure</title>
+<title>Nuvio TorrServer — Configure</title>
 <style>
   :root { color-scheme: light dark; }
   body { font-family: system-ui, sans-serif; max-width: 620px; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; }
@@ -120,6 +177,8 @@ const configHTML = `<!doctype html>
   legend { font-weight: 600; padding: 0 0.4rem; }
   label { display: inline-block; margin-right: 1rem; }
   .row { margin: 0.5rem 0; }
+  .cols { columns: 2; }
+  .cols label { display: block; }
   input[type=number] { width: 6rem; }
   button { font-size: 1rem; padding: 0.5rem 1.2rem; border-radius: 8px; cursor: pointer; }
   .saved { background: #1a7f37; color: #fff; padding: 0.6rem 1rem; border-radius: 8px; margin-bottom: 1rem; }
@@ -149,6 +208,21 @@ const configHTML = `<!doctype html>
     <legend>Exclude release types</legend>
     {{range .Excludable}}
       <label><input type="checkbox" name="exclude" value="{{.Value}}" {{if .Checked}}checked{{end}}> {{.Value}}</label>
+    {{end}}
+  </fieldset>
+
+  <fieldset>
+    <legend>Indexers</legend>
+    {{if .IndexersAvailable}}
+      <input type="hidden" name="indexers_present" value="1">
+      <div class="cols">
+      {{range .Indexers}}
+        <label><input type="checkbox" name="indexers" value="{{.ID}}" {{if .Checked}}checked{{end}}> {{.Name}}</label>
+      {{end}}
+      </div>
+      <div class="hint">Only the selected indexers are searched. Fewer, faster indexers = quicker results. Unchecking all is treated as "all".</div>
+    {{else}}
+      <div class="hint">Couldn't reach Prowlarr to list indexers right now — leaving this unchanged searches all of them.</div>
     {{end}}
   </fieldset>
 

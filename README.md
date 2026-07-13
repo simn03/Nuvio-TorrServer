@@ -1,4 +1,4 @@
-# Family TorrServer — Stremio addon
+# Nuvio TorrServer — Stremio addon
 
 A self-hosted Stremio addon (Go) packaged as a **single Docker container** that
 supervises two processes: the addon server and a sibling
@@ -80,10 +80,20 @@ Other admin commands (run via `docker exec ... /app/addon <cmd>`):
 | `listusers` | List users (token, created, active, install URL) |
 | `revoke --token "TOKEN"` | Deactivate a token (takes effect live) |
 
+## Per-user preferences (Configure page)
+
+Each user opens **Configure** in Stremio (or `/u/{token}/configure`) to set, live
+and without reinstalling: sort order, resolutions, excluded release types,
+prefer-HEVC, size/seeder caps, how many results to show, and **which Prowlarr
+indexers to search**. The indexer list is pulled from Prowlarr; selecting a
+smaller, faster set makes searches quicker (leaving all checked searches
+everything). Each stream result shows the full release title, a quality/size
+badge line, and the source indexer (`🔎 <name>`).
+
 ## Configuration
 
-All settings are environment variables — see [`.env.example`](.env.example) for
-the full list and defaults. Required: `SIGNING_SECRET`, `PROWLARR_URL`,
+All process settings are environment variables — see [`.env.example`](.env.example)
+for the full list and defaults. Required: `SIGNING_SECRET`, `PROWLARR_URL`,
 `PROWLARR_API_KEY`.
 
 ### Reaching Prowlarr (and the private-CA gotcha)

@@ -1,4 +1,4 @@
-// Command addon is the single binary for the Family TorrServer Stremio addon.
+// Command addon is the single binary for the Nuvio TorrServer Stremio addon.
 // Behaviour is selected by the first argument (subcommand); see the build plan §2.
 package main
 
@@ -120,7 +120,7 @@ func runListusers() error {
 }
 
 func usage() {
-	fmt.Fprint(os.Stderr, `Family TorrServer addon
+	fmt.Fprint(os.Stderr, `Nuvio TorrServer addon
 
 Usage:
   addon serve                 run the HTTP server

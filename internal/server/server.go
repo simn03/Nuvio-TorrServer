@@ -25,6 +25,7 @@ type Server struct {
 	set      *settings.Settings
 	store    *store.Store
 	resolver *resolver.Resolver
+	prow     *prowlarr.Client
 	torr     *torrserver.Client
 	sweeper  *torrserver.Sweeper
 	signer   *sign.Signer
@@ -42,6 +43,7 @@ func New(set *settings.Settings, st *store.Store) *Server {
 		set:      set,
 		store:    st,
 		resolver: resolver.New(cine, prow, torr, sweeper, set.TorrServerPreload),
+		prow:     prow,
 		torr:     torr,
 		sweeper:  sweeper,
 		signer:   sign.New(set.SigningSecret),

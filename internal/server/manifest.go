@@ -28,7 +28,7 @@ func (s *Server) handleManifest(w http.ResponseWriter, _ *http.Request) {
 	m := manifest{
 		ID:          "community.family.torrserver",
 		Version:     addonVersion,
-		Name:        "Family TorrServer",
+		Name:        "Nuvio TorrServer",
 		Description: "Self-hosted P2P streaming for family members via a private TorrServer.",
 		Resources:   []string{"stream"},
 		Types:       []string{"movie", "series"},

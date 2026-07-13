@@ -1,10 +1,53 @@
 package prowlarr
 
 import (
+	"context"
 	"encoding/hex"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
+
+type noopCache struct{}
+
+func (noopCache) ProwlarrCacheGet(string) ([]byte, bool)               { return nil, false }
+func (noopCache) ProwlarrCacheSet(string, []byte, time.Duration) error { return nil }
+
+func TestSearchSendsIndexerIds(t *testing.T) {
+	var gotIndexers []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotIndexers = r.URL.Query()["indexerIds"]
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[{"title":"X","indexer":"TheRARBG","indexerId":6}]`))
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "k", noopCache{}, time.Hour, false)
+	res, err := c.Search(context.Background(), "q", []int{2000}, []int{6, 3})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(gotIndexers) != 2 || gotIndexers[0] != "6" || gotIndexers[1] != "3" {
+		t.Errorf("indexerIds sent = %v, want [6 3]", gotIndexers)
+	}
+	if len(res) != 1 || res[0].Indexer != "TheRARBG" || res[0].IndexerID != 6 {
+		t.Errorf("result indexer not decoded: %+v", res)
+	}
+}
+
+func TestCacheKeyVariesByIndexers(t *testing.T) {
+	base := cacheKey("q", []int{2000}, nil)
+	withIdx := cacheKey("q", []int{2000}, []int{6})
+	if base == withIdx {
+		t.Error("cache key should differ when indexer selection differs")
+	}
+	// Order-independent.
+	if cacheKey("q", []int{2000}, []int{6, 3}) != cacheKey("q", []int{2000}, []int{3, 6}) {
+		t.Error("cache key should be order-independent for indexer ids")
+	}
+}
 
 func TestNormalizeInfoHash(t *testing.T) {
 	valid40 := "224bf45881aaaaaaaaaaaaaaaaaaaaaaaaaa1c68"

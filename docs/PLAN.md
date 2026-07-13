@@ -1,4 +1,4 @@
-# Family TorrServer — Stremio Addon Build Plan
+# Nuvio TorrServer — Stremio Addon Build Plan
 
 A self-hosted Stremio addon, written in Go, packaged as a **single Docker container**
 that supervises two processes: this addon server and a sibling **TorrServer** instance.

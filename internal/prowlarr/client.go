@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -42,6 +43,8 @@ type Result struct {
 	InfoHash    string `json:"infoHash"`
 	GUID        string `json:"guid"`
 	Protocol    string `json:"protocol"` // "torrent" | "usenet"
+	Indexer     string `json:"indexer"`  // source indexer name, for display
+	IndexerID   int    `json:"indexerId"`
 }
 
 // Link returns the best add-link for TorrServer. Order matters: a magnet or a
@@ -141,11 +144,23 @@ type prowlarrRelease struct {
 	InfoHash    string `json:"infoHash"`
 	GUID        string `json:"guid"`
 	Protocol    string `json:"protocol"`
+	Indexer     string `json:"indexer"`
+	IndexerID   int    `json:"indexerId"`
 }
 
-// Search runs a query for the given categories, using the cache when warm.
-func (c *Client) Search(ctx context.Context, query string, categories []int) ([]Result, error) {
-	key := cacheKey(query, categories)
+// Indexer is a configured Prowlarr indexer (for the per-user selection UI).
+type Indexer struct {
+	ID       int    `json:"id"`
+	Name     string `json:"name"`
+	Enable   bool   `json:"enable"`
+	Protocol string `json:"protocol"`
+}
+
+// Search runs a query for the given categories, using the cache when warm. When
+// indexerIds is non-empty the search is limited to those indexers; otherwise
+// Prowlarr queries all enabled indexers.
+func (c *Client) Search(ctx context.Context, query string, categories, indexerIds []int) ([]Result, error) {
+	key := cacheKey(query, categories, indexerIds)
 	if data, ok := c.cache.ProwlarrCacheGet(key); ok {
 		var cached []Result
 		if json.Unmarshal(data, &cached) == nil {
@@ -162,6 +177,9 @@ func (c *Client) Search(ctx context.Context, query string, categories []int) ([]
 	q.Set("type", "search")
 	for _, cat := range categories {
 		q.Add("categories", strconv.Itoa(cat))
+	}
+	for _, id := range indexerIds {
+		q.Add("indexerIds", strconv.Itoa(id))
 	}
 	u.RawQuery = q.Encode()
 
@@ -200,8 +218,9 @@ func (c *Client) Search(ctx context.Context, query string, categories []int) ([]
 	return results, nil
 }
 
-// cacheKey hashes the normalised query + sorted categories.
-func cacheKey(query string, categories []int) string {
+// cacheKey hashes the normalised query + categories + selected indexer ids, so
+// different indexer selections cache independently.
+func cacheKey(query string, categories, indexerIds []int) string {
 	var b strings.Builder
 	b.WriteString(strings.ToLower(strings.TrimSpace(query)))
 	b.WriteByte('|')
@@ -209,6 +228,45 @@ func cacheKey(query string, categories []int) string {
 		b.WriteString(strconv.Itoa(c))
 		b.WriteByte(',')
 	}
+	b.WriteByte('|')
+	for _, id := range sortedCopy(indexerIds) {
+		b.WriteString(strconv.Itoa(id))
+		b.WriteByte(',')
+	}
 	sum := sha256.Sum256([]byte(b.String()))
 	return hex.EncodeToString(sum[:])
+}
+
+func sortedCopy(in []int) []int {
+	out := append([]int(nil), in...)
+	sort.Ints(out)
+	return out
+}
+
+// Indexers lists Prowlarr's configured indexers (for the per-user selection UI).
+func (c *Client) Indexers(ctx context.Context) ([]Indexer, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/api/v1/indexer", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("X-Api-Key", c.apiKey)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("prowlarr indexers: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("prowlarr indexers status %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	if err != nil {
+		return nil, err
+	}
+	var idx []Indexer
+	if err := json.Unmarshal(body, &idx); err != nil {
+		return nil, fmt.Errorf("prowlarr indexers decode: %w", err)
+	}
+	return idx, nil
 }

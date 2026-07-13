@@ -13,6 +13,7 @@ type UserConfig struct {
 	MaxSizeGB        float64  `json:"maxSizeGB"`        // 0 = no cap
 	MinSeeders       int      `json:"minSeeders"`       // drop results below this
 	MaxResults       int      `json:"maxResults"`       // cap streams returned
+	Indexers         []int    `json:"indexers"`         // Prowlarr indexer ids to search; empty = all
 }
 
 // Allowed option values (used by defaults, validation, and the config UI).
@@ -73,7 +74,25 @@ func Normalize(c UserConfig) UserConfig {
 	if c.MaxResults > 50 {
 		c.MaxResults = 50
 	}
+	c.Indexers = dedupeInts(c.Indexers)
 	return c
+}
+
+// dedupeInts removes duplicates and non-positive ids, preserving order. A nil/
+// empty result means "all indexers".
+func dedupeInts(in []int) []int {
+	if len(in) == 0 {
+		return nil
+	}
+	seen := make(map[int]bool, len(in))
+	var out []int
+	for _, v := range in {
+		if v > 0 && !seen[v] {
+			seen[v] = true
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 func contains(set []string, v string) bool {
