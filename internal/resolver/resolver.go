@@ -7,7 +7,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"path"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -66,6 +68,11 @@ type MediaID struct {
 
 // ParseID parses "tt1234567" (movie) or "tt1234567:S:E" (series).
 func ParseID(kind, id string) (MediaID, error) {
+	unescaped, err := url.PathUnescape(id)
+	if err != nil {
+		return MediaID{}, fmt.Errorf("bad id %q: %w", id, err)
+	}
+	id = unescaped
 	parts := strings.Split(id, ":")
 	m := MediaID{IMDb: parts[0]}
 	if !strings.HasPrefix(m.IMDb, "tt") {
@@ -109,13 +116,16 @@ func (r *Resolver) Candidates(ctx context.Context, kind, id string, cfg config.U
 		slog.ErrorContext(ctx, "resolve: search failed", "id", id, "queries", queries, "dur", time.Since(step), "err", err)
 		return nil, mid, err
 	}
+	rawResults := len(results)
+	results = filterResultsForMedia(results, mid)
 	searchDur := time.Since(step)
 
 	step = time.Now()
 	candidates := rank.Rank(results, cfg)
+	prioritizeExactEpisode(candidates, mid)
 	slog.InfoContext(ctx, "resolve: candidates ready",
 		"id", id, "title", meta.Name, "queries", queries,
-		"raw_results", len(results), "candidates", len(candidates),
+		"raw_results", rawResults, "filtered_results", len(results), "candidates", len(candidates),
 		"cinemeta_dur", cinemetaDur, "search_dur", searchDur, "rank_dur", time.Since(step),
 		"total_dur", time.Since(total),
 	)
@@ -124,8 +134,8 @@ func (r *Resolver) Candidates(ctx context.Context, kind, id string, cfg config.U
 
 // Resolve returns playable streams: it ranks candidates, then adds each to
 // TorrServer to obtain its hash and pick the correct file (season-pack episode
-// selection for series, largest video file for movies), preloading if enabled.
-// Candidates that can't be added are dropped.
+// selection for series, largest video file for movies). Candidates that can't
+// be added are dropped.
 func (r *Resolver) Resolve(ctx context.Context, kind, id string, cfg config.UserConfig) ([]Stream, error) {
 	start := time.Now()
 	candidates, mid, err := r.Candidates(ctx, kind, id, cfg)
@@ -165,6 +175,7 @@ func (r *Resolver) Resolve(ctx context.Context, kind, id string, cfg config.User
 			out = append(out, streams[i])
 		}
 	}
+	r.preloadTop(ctx, out)
 	slog.InfoContext(ctx, "resolve: complete", "id", id, "candidates", len(candidates), "streams", len(out), "dur", time.Since(start))
 	return out, nil
 }
@@ -176,23 +187,93 @@ func (r *Resolver) enrich(ctx context.Context, c rank.Candidate, mid MediaID) (S
 	if link == "" {
 		return Stream{}, fmt.Errorf("no link")
 	}
+	if hash, ok := lazyPlayableHash(c, mid); ok {
+		r.ts.RegisterAddLink(hash, link)
+		slog.DebugContext(ctx, "resolve: candidate lazy registered", "title", c.Result.Title, "hash", hash, "file_index", 1, "dur", time.Since(start))
+		return Stream{Candidate: c, Hash: hash, FileIndex: 1}, nil
+	}
 	hash, files, err := r.ts.Add(ctx, link)
 	if err != nil {
 		return Stream{}, err
 	}
 	if len(files) == 0 {
-		files, _ = r.ts.EnsureFiles(ctx, hash, r.fileWait)
+		if shouldWaitForFiles(c.Parsed, mid) {
+			files, _ = r.ts.EnsureFiles(ctx, hash, r.fileWait)
+		} else {
+			slog.DebugContext(ctx, "resolve: exact episode release; skipping file wait", "title", c.Result.Title, "hash", hash)
+		}
 	}
 
 	index := selectFile(files, mid)
 	r.sweeper.Touch(hash)
-	if r.preload {
-		pctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		_ = r.ts.Preload(pctx, hash, index)
-		cancel()
-	}
 	slog.DebugContext(ctx, "resolve: candidate enriched", "title", c.Result.Title, "hash", hash, "file_index", index, "dur", time.Since(start))
 	return Stream{Candidate: c, Hash: hash, FileIndex: index}, nil
+}
+
+func lazyPlayableHash(c rank.Candidate, mid MediaID) (string, bool) {
+	if shouldWaitForFiles(c.Parsed, mid) {
+		return "", false
+	}
+	hash := prowlarr.NormalizeInfoHash(c.Result.InfoHash)
+	return hash, hash != ""
+}
+
+func (r *Resolver) preloadTop(ctx context.Context, streams []Stream) {
+	if !r.preload || len(streams) == 0 {
+		return
+	}
+	s := streams[0]
+	go func() {
+		pctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		if err := r.ts.EnsureAdded(pctx, s.Hash); err != nil {
+			return
+		}
+		if err := r.ts.Preload(pctx, s.Hash, s.FileIndex); err != nil {
+			return
+		}
+		slog.DebugContext(pctx, "resolve: top stream preloaded", "hash", s.Hash, "file_index", s.FileIndex)
+	}()
+}
+
+func filterResultsForMedia(results []prowlarr.Result, mid MediaID) []prowlarr.Result {
+	if !mid.Series || mid.Episode <= 0 {
+		return results
+	}
+	out := results[:0]
+	for _, res := range results {
+		p := rank.Parse(res.Title)
+		if p.HasEpisode && !episodeMatches(p, mid) {
+			continue
+		}
+		out = append(out, res)
+	}
+	return out
+}
+
+func shouldWaitForFiles(p rank.Parsed, mid MediaID) bool {
+	if !mid.Series || mid.Episode <= 0 {
+		return true
+	}
+	return !p.HasEpisode || !episodeMatches(p, mid)
+}
+
+func episodeMatches(p rank.Parsed, mid MediaID) bool {
+	if !p.HasEpisode || p.Episode != mid.Episode {
+		return false
+	}
+	return !p.HasSeason || mid.Season == 0 || p.Season == mid.Season
+}
+
+func prioritizeExactEpisode(candidates []rank.Candidate, mid MediaID) {
+	if !mid.Series || mid.Episode <= 0 {
+		return
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		iExact := episodeMatches(candidates[i].Parsed, mid)
+		jExact := episodeMatches(candidates[j].Parsed, mid)
+		return iExact && !jExact
+	})
 }
 
 // buildQueries produces the search query strings and categories (§8 step 3).

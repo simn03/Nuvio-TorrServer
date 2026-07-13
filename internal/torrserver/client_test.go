@@ -63,6 +63,42 @@ func TestClientAddGetRemove(t *testing.T) {
 	}
 }
 
+func TestEnsureAddedUsesRegisteredLink(t *testing.T) {
+	var gotLink string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/torrents" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		body, _ := io.ReadAll(r.Body)
+		var req map[string]any
+		_ = json.Unmarshal(body, &req)
+		gotLink, _ = req["link"].(string)
+		_ = json.NewEncoder(w).Encode(torrent{Hash: "abc123"})
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL)
+	c.RegisterAddLink("ABC123", "magnet:?xt=urn:btih:abc123")
+	if err := c.EnsureAdded(context.Background(), "abc123"); err != nil {
+		t.Fatalf("EnsureAdded: %v", err)
+	}
+	if gotLink != "magnet:?xt=urn:btih:abc123" {
+		t.Fatalf("link = %q", gotLink)
+	}
+}
+
+func TestEnsureAddedIgnoresUnknownHash(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("unexpected request for unknown hash")
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL)
+	if err := c.EnsureAdded(context.Background(), "missing"); err != nil {
+		t.Fatalf("EnsureAdded: %v", err)
+	}
+}
+
 func TestEnsureFilesGivesUp(t *testing.T) {
 	srv, _ := mockTS(t, nil) // always empty file list
 	defer srv.Close()

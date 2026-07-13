@@ -1,6 +1,8 @@
 package server
 
 import (
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -93,6 +95,44 @@ func TestPlayRejectsBadSigAndExpiry(t *testing.T) {
 	playRouter(s).ServeHTTP(rec, req)
 	if rec.Code != http.StatusGone {
 		t.Errorf("expired status = %d, want 410", rec.Code)
+	}
+}
+
+func TestPlayLazyAddsRegisteredHashBeforeProxy(t *testing.T) {
+	var actions []string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/torrents":
+			body, _ := io.ReadAll(r.Body)
+			var req map[string]any
+			_ = json.Unmarshal(body, &req)
+			action, _ := req["action"].(string)
+			actions = append(actions, action)
+			_ = json.NewEncoder(w).Encode(map[string]any{"hash": "abchash"})
+		case "/stream/stream":
+			actions = append(actions, "stream")
+			w.WriteHeader(http.StatusPartialContent)
+			_, _ = w.Write([]byte("partialdata"))
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer upstream.Close()
+
+	s := newPlayServer(upstream.URL)
+	s.torr.RegisterAddLink("abchash", "magnet:?xt=urn:btih:abchash")
+	exp := time.Now().Add(time.Hour).UnixMilli()
+	path := s.signer.PlayPath("abchash", 1, exp)
+
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	rec := httptest.NewRecorder()
+	playRouter(s).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusPartialContent {
+		t.Fatalf("status = %d, want 206", rec.Code)
+	}
+	if len(actions) != 2 || actions[0] != "add" || actions[1] != "stream" {
+		t.Fatalf("actions = %v, want [add stream]", actions)
 	}
 }
 

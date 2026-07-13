@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"sync"
 	"testing"
 	"time"
@@ -12,6 +13,8 @@ import (
 	"nuvio-torrserver/internal/cinemeta"
 	"nuvio-torrserver/internal/config"
 	"nuvio-torrserver/internal/prowlarr"
+	"nuvio-torrserver/internal/rank"
+	"nuvio-torrserver/internal/torrserver"
 )
 
 // fakeCache satisfies both cinemeta.Cache and prowlarr.Cache with no caching
@@ -31,6 +34,10 @@ func TestParseID(t *testing.T) {
 	m, _ = ParseID("series", "tt1234567:2:5")
 	if !m.Series || m.Season != 2 || m.Episode != 5 {
 		t.Errorf("series parse wrong: %+v", m)
+	}
+	m, _ = ParseID("series", "tt1234567%3A2%3A5")
+	if m.IMDb != "tt1234567" || !m.Series || m.Season != 2 || m.Episode != 5 {
+		t.Errorf("escaped series parse wrong: %+v", m)
 	}
 	if _, err := ParseID("movie", "nothing"); err == nil {
 		t.Errorf("expected error for bad id")
@@ -132,6 +139,133 @@ func TestResolveSeriesIssuesEpisodeAndPackQueries(t *testing.T) {
 		if !seen {
 			t.Errorf("missing expected query %q", q)
 		}
+	}
+}
+
+func TestSeriesFilterDropsOtherEpisodesButKeepsPacks(t *testing.T) {
+	results := []prowlarr.Result{
+		{Title: "House of the Dragon S01E01 1080p WEB-DL", InfoHash: "exact"},
+		{Title: "House of the Dragon S01E07 1080p WEB-DL", InfoHash: "wrong"},
+		{Title: "House of the Dragon S01 1080p WEB-DL", InfoHash: "pack"},
+		{Title: "House of the Dragon Season 1 Complete 1080p WEB-DL", InfoHash: "season-word"},
+		{Title: "House of the Dragon S02E01 1080p WEB-DL", InfoHash: "wrong-season"},
+	}
+
+	got := filterResultsForMedia(results, MediaID{Series: true, Season: 1, Episode: 1})
+
+	if len(got) != 3 {
+		t.Fatalf("want exact episode plus two season packs, got %d: %+v", len(got), got)
+	}
+	want := map[string]bool{"exact": false, "pack": false, "season-word": false}
+	for _, r := range got {
+		if _, ok := want[r.InfoHash]; !ok {
+			t.Fatalf("unexpected result kept: %+v", r)
+		}
+		want[r.InfoHash] = true
+	}
+	for hash, seen := range want {
+		if !seen {
+			t.Fatalf("missing kept result %q", hash)
+		}
+	}
+}
+
+func TestShouldWaitForFilesSkipsExactEpisodeRelease(t *testing.T) {
+	mid := MediaID{Series: true, Season: 1, Episode: 1}
+
+	if shouldWaitForFiles(rank.Parse("House of the Dragon S01E01 1080p WEB-DL"), mid) {
+		t.Fatalf("exact episode release should not wait for TorrServer file list")
+	}
+	if !shouldWaitForFiles(rank.Parse("House of the Dragon S01 1080p WEB-DL"), mid) {
+		t.Fatalf("season pack should wait for TorrServer file list")
+	}
+	if !shouldWaitForFiles(rank.Parse("House of the Dragon S01E02 1080p WEB-DL"), mid) {
+		t.Fatalf("wrong episode should wait; filtering should normally drop it first")
+	}
+	if !shouldWaitForFiles(rank.Parse("Movie 2020 1080p WEB-DL"), MediaID{}) {
+		t.Fatalf("movie should wait so largest video can be selected")
+	}
+}
+
+func TestLazyPlayableHashForExactEpisodeWithInfoHash(t *testing.T) {
+	c := rank.Candidate{
+		Result: prowlarr.Result{InfoHash: "ABCDEF1234567890ABCDEF1234567890ABCDEF12"},
+		Parsed: rank.Parse("Frieren S02E09 1080p WEB-DL"),
+	}
+	hash, ok := lazyPlayableHash(c, MediaID{Series: true, Season: 2, Episode: 9})
+	if !ok {
+		t.Fatal("expected exact episode with infohash to be lazy-playable")
+	}
+	if hash != "abcdef1234567890abcdef1234567890abcdef12" {
+		t.Fatalf("hash = %q", hash)
+	}
+}
+
+func TestLazyPlayableHashRejectsSeasonPack(t *testing.T) {
+	c := rank.Candidate{
+		Result: prowlarr.Result{InfoHash: "abcdef1234567890abcdef1234567890abcdef12"},
+		Parsed: rank.Parse("Frieren S02 1080p WEB-DL"),
+	}
+	if _, ok := lazyPlayableHash(c, MediaID{Series: true, Season: 2, Episode: 9}); ok {
+		t.Fatal("season pack must not be lazy-playable because file index is unknown")
+	}
+}
+
+func TestPrioritizeExactEpisodeBeforeSeasonPacks(t *testing.T) {
+	candidates := []rank.Candidate{
+		{Result: prowlarr.Result{InfoHash: "pack-4k"}, Parsed: rank.Parse("House of the Dragon S01 2160p WEB-DL")},
+		{Result: prowlarr.Result{InfoHash: "exact-1080"}, Parsed: rank.Parse("House of the Dragon S01E01 1080p WEB-DL")},
+		{Result: prowlarr.Result{InfoHash: "pack-1080"}, Parsed: rank.Parse("House of the Dragon Season 1 Complete 1080p WEB-DL")},
+		{Result: prowlarr.Result{InfoHash: "exact-720"}, Parsed: rank.Parse("House of the Dragon S01E01 720p WEB-DL")},
+	}
+
+	prioritizeExactEpisode(candidates, MediaID{Series: true, Season: 1, Episode: 1})
+
+	got := []string{
+		candidates[0].Result.InfoHash,
+		candidates[1].Result.InfoHash,
+		candidates[2].Result.InfoHash,
+		candidates[3].Result.InfoHash,
+	}
+	want := []string{"exact-1080", "exact-720", "pack-4k", "pack-1080"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("order = %v, want %v", got, want)
+		}
+	}
+}
+
+func TestPreloadTopOnlyPreloadsFirstStream(t *testing.T) {
+	preloaded := make(chan string, 2)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/stream/stream" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		link, _ := url.QueryUnescape(r.URL.Query().Get("link"))
+		preloaded <- link
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer ts.Close()
+
+	r := &Resolver{ts: torrserver.New(ts.URL), preload: true}
+	r.preloadTop(context.Background(), []Stream{
+		{Hash: "first", FileIndex: 1},
+		{Hash: "second", FileIndex: 1},
+	})
+
+	select {
+	case got := <-preloaded:
+		if got != "first" {
+			t.Fatalf("preloaded %q, want first", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for preload")
+	}
+
+	select {
+	case got := <-preloaded:
+		t.Fatalf("unexpected extra preload for %q", got)
+	case <-time.After(100 * time.Millisecond):
 	}
 }
 

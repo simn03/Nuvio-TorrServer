@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -27,6 +28,8 @@ type File struct {
 type Client struct {
 	baseURL string
 	http    *http.Client
+	mu      sync.RWMutex
+	addLink map[string]string
 }
 
 // New builds a client for the given internal base URL (e.g. http://127.0.0.1:8090).
@@ -34,6 +37,7 @@ func New(baseURL string) *Client {
 	return &Client{
 		baseURL: strings.TrimSuffix(baseURL, "/"),
 		http:    &http.Client{Timeout: 30 * time.Second},
+		addLink: make(map[string]string),
 	}
 }
 
@@ -104,6 +108,40 @@ func (c *Client) Add(ctx context.Context, link string) (string, []File, error) {
 	}
 	slog.InfoContext(ctx, "torrserver add", "hash", t.Hash, "files", len(t.FileStats), "dur", time.Since(start))
 	return t.Hash, t.FileStats, nil
+}
+
+// RegisterAddLink records how to add a hash later. This lets the addon return
+// signed /play URLs for obvious single-file episode torrents without creating
+// every candidate in TorrServer during stream-list generation.
+func (c *Client) RegisterAddLink(hash, link string) {
+	hash = strings.ToLower(strings.TrimSpace(hash))
+	link = strings.TrimSpace(link)
+	if hash == "" || link == "" {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.addLink[hash] = link
+}
+
+// EnsureAdded adds a registered hash to TorrServer. Unregistered hashes are
+// assumed to have already been added during resolution.
+func (c *Client) EnsureAdded(ctx context.Context, hash string) error {
+	key := strings.ToLower(strings.TrimSpace(hash))
+	c.mu.RLock()
+	link := c.addLink[key]
+	c.mu.RUnlock()
+	if link == "" {
+		return nil
+	}
+	addedHash, _, err := c.Add(ctx, link)
+	if err != nil {
+		return err
+	}
+	if addedHash != "" && !strings.EqualFold(addedHash, key) {
+		slog.WarnContext(ctx, "torrserver lazy add hash mismatch", "requested_hash", hash, "added_hash", addedHash)
+	}
+	return nil
 }
 
 // Files returns the current file list for a hash (may be empty if metadata is

@@ -46,6 +46,11 @@ func main() {
 			fmt.Fprintf(os.Stderr, "listusers: %v\n", err)
 			os.Exit(1)
 		}
+	case "logwrap":
+		if err := runLogwrap(os.Args[2:]); err != nil {
+			writeLogwrapError(os.Stderr, "logwrap", err)
+			os.Exit(1)
+		}
 	case "-h", "--help", "help":
 		usage()
 	default:
@@ -139,5 +144,6 @@ Usage:
   addon adduser --name NAME   mint a user token (milestone 2)
   addon revoke --token TOKEN  deactivate a token (milestone 2)
   addon listusers             list users (milestone 2)
+  addon logwrap --source NAME  wrap stdin lines as JSON logs
 `)
 }

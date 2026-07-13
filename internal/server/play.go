@@ -1,6 +1,8 @@
 package server
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -45,6 +47,12 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := s.torr.EnsureAdded(r.Context(), hash); err != nil {
+		slog.ErrorContext(r.Context(), "play: lazy add failed", "hash", hash, "index", index, "err", err)
+		http.Error(w, "upstream error", http.StatusBadGateway)
+		return
+	}
+
 	// Update last-access so the sweeper keeps this torrent alive while playing.
 	s.sweeper.Touch(hash)
 
@@ -67,6 +75,10 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 			// TorrServer serves partial content for seeking.
 		},
 		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, e error) {
+			if errors.Is(e, context.Canceled) || errors.Is(r.Context().Err(), context.Canceled) {
+				slog.InfoContext(r.Context(), "play: client canceled", "hash", hash, "index", index, "dur", time.Since(start))
+				return
+			}
 			slog.ErrorContext(r.Context(), "play: proxy error", "hash", hash, "index", index, "dur", time.Since(start), "err", e)
 			http.Error(w, "upstream error", http.StatusBadGateway)
 		},
