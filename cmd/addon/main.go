@@ -11,11 +11,11 @@ import (
 	"os/signal"
 	"syscall"
 
-	"nuvio-torrserver/admin"
-	"nuvio-torrserver/internal/logging"
-	"nuvio-torrserver/internal/server"
-	"nuvio-torrserver/internal/settings"
-	"nuvio-torrserver/internal/store"
+	"github.com/simn03/nuvio-p2p-http-addon/admin"
+	"github.com/simn03/nuvio-p2p-http-addon/internal/logging"
+	"github.com/simn03/nuvio-p2p-http-addon/internal/server"
+	"github.com/simn03/nuvio-p2p-http-addon/internal/settings"
+	"github.com/simn03/nuvio-p2p-http-addon/internal/store"
 )
 
 func main() {

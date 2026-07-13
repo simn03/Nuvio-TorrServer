@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"nuvio-torrserver/internal/config"
+	"github.com/simn03/nuvio-p2p-http-addon/internal/config"
 )
 
 // ErrNotFound is returned when a token has no matching user row.

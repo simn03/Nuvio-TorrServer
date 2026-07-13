@@ -3,7 +3,7 @@ package resolver
 import (
 	"testing"
 
-	"nuvio-torrserver/internal/torrserver"
+	"github.com/simn03/nuvio-p2p-http-addon/internal/torrserver"
 )
 
 func TestSelectFileSeriesEpisodeMatch(t *testing.T) {

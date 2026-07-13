@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"time"
 
-	"nuvio-torrserver/internal/config"
+	"github.com/simn03/nuvio-p2p-http-addon/internal/config"
 
 	"github.com/go-chi/chi/v5"
 )

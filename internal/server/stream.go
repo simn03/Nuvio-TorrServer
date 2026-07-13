@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"nuvio-torrserver/internal/rank"
+	"github.com/simn03/nuvio-p2p-http-addon/internal/rank"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -62,7 +62,7 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 			Name:  streamName(rs.Candidate),
 			Title: streamTitle(rs.Candidate),
 			BehaviorHints: &streamBehaviorHints{
-				BingeGroup: "nuvio-torrserver-" + rs.Candidate.Parsed.Resolution,
+				BingeGroup: "nuvio-p2p-http-addon-" + rs.Candidate.Parsed.Resolution,
 			},
 		})
 	}

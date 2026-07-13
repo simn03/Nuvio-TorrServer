@@ -3,8 +3,8 @@ package rank
 import (
 	"testing"
 
-	"nuvio-torrserver/internal/config"
-	"nuvio-torrserver/internal/prowlarr"
+	"github.com/simn03/nuvio-p2p-http-addon/internal/config"
+	"github.com/simn03/nuvio-p2p-http-addon/internal/prowlarr"
 )
 
 func TestParseSampleTitles(t *testing.T) {

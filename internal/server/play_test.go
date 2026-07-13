@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"nuvio-torrserver/internal/settings"
-	"nuvio-torrserver/internal/sign"
-	"nuvio-torrserver/internal/torrserver"
+	"github.com/simn03/nuvio-p2p-http-addon/internal/settings"
+	"github.com/simn03/nuvio-p2p-http-addon/internal/sign"
+	"github.com/simn03/nuvio-p2p-http-addon/internal/torrserver"
 
 	"github.com/go-chi/chi/v5"
 )

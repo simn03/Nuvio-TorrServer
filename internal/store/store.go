@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 
-	"nuvio-torrserver/migrations"
+	"github.com/simn03/nuvio-p2p-http-addon/migrations"
 
 	_ "modernc.org/sqlite" // pure-Go driver, CGO_ENABLED=0
 )

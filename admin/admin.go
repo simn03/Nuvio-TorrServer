@@ -10,8 +10,8 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"nuvio-torrserver/internal/settings"
-	"nuvio-torrserver/internal/store"
+	"github.com/simn03/nuvio-p2p-http-addon/internal/settings"
+	"github.com/simn03/nuvio-p2p-http-addon/internal/store"
 )
 
 // AddUser mints a token, then prints the full install URL for it.

@@ -1,4 +1,4 @@
-module nuvio-torrserver
+module github.com/simn03/nuvio-p2p-http-addon
 
 go 1.23
 

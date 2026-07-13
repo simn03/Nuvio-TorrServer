@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"time"
 
-	"nuvio-torrserver/internal/sign"
+	"github.com/simn03/nuvio-p2p-http-addon/internal/sign"
 
 	"github.com/go-chi/chi/v5"
 )

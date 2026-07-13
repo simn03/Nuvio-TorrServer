@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"nuvio-torrserver/internal/config"
+	"github.com/simn03/nuvio-p2p-http-addon/internal/config"
 )
 
 // GetConfig returns the user's stored config, or the defaults if no row exists

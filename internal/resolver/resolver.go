@@ -15,11 +15,11 @@ import (
 	"sync"
 	"time"
 
-	"nuvio-torrserver/internal/cinemeta"
-	"nuvio-torrserver/internal/config"
-	"nuvio-torrserver/internal/prowlarr"
-	"nuvio-torrserver/internal/rank"
-	"nuvio-torrserver/internal/torrserver"
+	"github.com/simn03/nuvio-p2p-http-addon/internal/cinemeta"
+	"github.com/simn03/nuvio-p2p-http-addon/internal/config"
+	"github.com/simn03/nuvio-p2p-http-addon/internal/prowlarr"
+	"github.com/simn03/nuvio-p2p-http-addon/internal/rank"
+	"github.com/simn03/nuvio-p2p-http-addon/internal/torrserver"
 )
 
 // Resolver wires the metadata and search clients.
