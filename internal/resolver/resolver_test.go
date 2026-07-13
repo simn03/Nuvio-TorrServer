@@ -187,6 +187,60 @@ func TestShouldWaitForFilesSkipsExactEpisodeRelease(t *testing.T) {
 	}
 }
 
+func TestFileWaitForMediaCapsMoviesOnly(t *testing.T) {
+	r := &Resolver{fileWait: 8 * time.Second}
+	if got := r.fileWaitForMedia(MediaID{}); got != movieFileWaitCap {
+		t.Fatalf("movie wait = %v, want %v", got, movieFileWaitCap)
+	}
+	if got := r.fileWaitForMedia(MediaID{Series: true, Season: 1, Episode: 1}); got != 8*time.Second {
+		t.Fatalf("series wait = %v, want 8s", got)
+	}
+
+	r.fileWait = time.Second
+	if got := r.fileWaitForMedia(MediaID{}); got != time.Second {
+		t.Fatalf("short configured movie wait = %v, want 1s", got)
+	}
+}
+
+func TestAddWaitForMediaCapsAllMedia(t *testing.T) {
+	r := &Resolver{fileWait: 8 * time.Second}
+	if got := r.addWaitForMedia(MediaID{}); got != addWaitCap {
+		t.Fatalf("movie add wait = %v, want %v", got, addWaitCap)
+	}
+	if got := r.addWaitForMedia(MediaID{Series: true, Season: 1, Episode: 1}); got != addWaitCap {
+		t.Fatalf("series add wait = %v, want %v", got, addWaitCap)
+	}
+
+	r.fileWait = time.Second
+	if got := r.addWaitForMedia(MediaID{}); got != time.Second {
+		t.Fatalf("short configured movie add wait = %v, want 1s", got)
+	}
+}
+
+func TestLazyPlayableHashForMovieWithInfoHash(t *testing.T) {
+	c := rank.Candidate{
+		Result: prowlarr.Result{InfoHash: "ABCDEF1234567890ABCDEF1234567890ABCDEF12"},
+		Parsed: rank.Parse("Movie 2026 1080p WEB-DL"),
+	}
+	hash, ok := lazyPlayableHash(c, MediaID{})
+	if !ok {
+		t.Fatal("expected movie with infohash to be lazy-playable")
+	}
+	if hash != "abcdef1234567890abcdef1234567890abcdef12" {
+		t.Fatalf("hash = %q", hash)
+	}
+}
+
+func TestLazyPlayableHashRejectsMovieWithoutInfoHash(t *testing.T) {
+	c := rank.Candidate{
+		Result: prowlarr.Result{DownloadURL: "http://prowlarr/download"},
+		Parsed: rank.Parse("Movie 2026 1080p WEB-DL"),
+	}
+	if _, ok := lazyPlayableHash(c, MediaID{}); ok {
+		t.Fatal("movie without infohash must be added to discover its hash")
+	}
+}
+
 func TestLazyPlayableHashForExactEpisodeWithInfoHash(t *testing.T) {
 	c := rank.Candidate{
 		Result: prowlarr.Result{InfoHash: "ABCDEF1234567890ABCDEF1234567890ABCDEF12"},

@@ -36,6 +36,9 @@ type Resolver struct {
 	concurrency int
 }
 
+const movieFileWaitCap = 6 * time.Second
+const addWaitCap = 6 * time.Second
+
 // New builds a Resolver. ts/sweeper may be nil when only the pure ranking path
 // (Candidates) is used, e.g. in tests.
 func New(cine *cinemeta.Client, prow *prowlarr.Client, ts *torrserver.Client, sweeper *torrserver.Sweeper, preload bool) *Resolver {
@@ -192,13 +195,15 @@ func (r *Resolver) enrich(ctx context.Context, c rank.Candidate, mid MediaID) (S
 		slog.DebugContext(ctx, "resolve: candidate lazy registered", "title", c.Result.Title, "hash", hash, "file_index", 1, "dur", time.Since(start))
 		return Stream{Candidate: c, Hash: hash, FileIndex: 1}, nil
 	}
-	hash, files, err := r.ts.Add(ctx, link)
+	addCtx, cancel := context.WithTimeout(ctx, r.addWaitForMedia(mid))
+	defer cancel()
+	hash, files, err := r.ts.Add(addCtx, link)
 	if err != nil {
 		return Stream{}, err
 	}
 	if len(files) == 0 {
 		if shouldWaitForFiles(c.Parsed, mid) {
-			files, _ = r.ts.EnsureFiles(ctx, hash, r.fileWait)
+			files, _ = r.ts.EnsureFiles(ctx, hash, r.fileWaitForMedia(mid))
 		} else {
 			slog.DebugContext(ctx, "resolve: exact episode release; skipping file wait", "title", c.Result.Title, "hash", hash)
 		}
@@ -210,12 +215,31 @@ func (r *Resolver) enrich(ctx context.Context, c rank.Candidate, mid MediaID) (S
 	return Stream{Candidate: c, Hash: hash, FileIndex: index}, nil
 }
 
-func lazyPlayableHash(c rank.Candidate, mid MediaID) (string, bool) {
-	if shouldWaitForFiles(c.Parsed, mid) {
-		return "", false
+func (r *Resolver) fileWaitForMedia(mid MediaID) time.Duration {
+	if mid.Series || r.fileWait <= movieFileWaitCap {
+		return r.fileWait
 	}
-	hash := prowlarr.NormalizeInfoHash(c.Result.InfoHash)
-	return hash, hash != ""
+	return movieFileWaitCap
+}
+
+func (r *Resolver) addWaitForMedia(mid MediaID) time.Duration {
+	if r.fileWait <= addWaitCap {
+		return r.fileWait
+	}
+	return addWaitCap
+}
+
+func lazyPlayableHash(c rank.Candidate, mid MediaID) (string, bool) {
+	switch {
+	case !mid.Series:
+		hash := prowlarr.NormalizeInfoHash(c.Result.InfoHash)
+		return hash, hash != ""
+	case shouldWaitForFiles(c.Parsed, mid):
+		return "", false
+	default:
+		hash := prowlarr.NormalizeInfoHash(c.Result.InfoHash)
+		return hash, hash != ""
+	}
 }
 
 func (r *Resolver) preloadTop(ctx context.Context, streams []Stream) {
