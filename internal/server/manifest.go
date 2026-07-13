@@ -29,7 +29,7 @@ func (s *Server) handleManifest(w http.ResponseWriter, _ *http.Request) {
 		ID:          "community.family.torrserver",
 		Version:     addonVersion,
 		Name:        "Nuvio TorrServer",
-		Description: "Self-hosted P2P streaming for family members via a private TorrServer.",
+		Description: "Self-hosted P2P streaming for multiple members via a private TorrServer.",
 		Resources:   []string{"stream"},
 		Types:       []string{"movie", "series"},
 		IDPrefixes:  []string{"tt"},

@@ -3,7 +3,7 @@
 A self-hosted Stremio addon (Go) packaged as a **single Docker container** that
 supervises two processes: the addon server and a sibling
 [TorrServer](https://github.com/YouROK/TorrServer). It provides P2P streaming to
-family members over your existing TLS — **no VPN or tunnel required**. Access
+members over your existing TLS — **no VPN or tunnel required**. Access
 control is a per-user bearer token in the URL path plus short-lived HMAC-signed
 media URLs; TorrServer is never exposed to the internet.
 
@@ -58,10 +58,10 @@ torrserver.example.com {
 ```
 
 TLS via your existing setup (e.g. Cloudflare). The access layer is TLS + path
-token + signed play URLs — no family-facing VPN or tunnel. Optional hardening:
+token + signed play URLs — no public-facing VPN or tunnel. Optional hardening:
 a Cloudflare WAF rule restricting the hostname to your country/ASN.
 
-## Adding a family member
+## Adding a member
 
 ```bash
 docker exec nuvio-torrserver /app/addon adduser --name "Mom"

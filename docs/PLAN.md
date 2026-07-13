@@ -3,7 +3,7 @@
 A self-hosted Stremio addon, written in Go, packaged as a **single Docker container**
 that supervises two processes: this addon server and a sibling **TorrServer** instance.
 Prowlarr (already self-hosted by the operator) is used for indexer search. The addon
-provides P2P streaming to family members over TLS with **no VPN or tunnel required** —
+provides P2P streaming to members over TLS with **no VPN or tunnel required** —
 access control is a per-user bearer token in the URL path plus short-lived HMAC-signed
 media URLs.
 
@@ -330,11 +330,11 @@ torrserver.example.com {
 }
 ```
 
-TLS via the operator's existing Cloudflare setup. No family-facing VPN or tunnel: TLS +
+TLS via the operator's existing Cloudflare setup. No public-facing VPN or tunnel: TLS +
 path token + signed play URLs are the whole access layer. Optional hardening note:
 Cloudflare WAF rule restricting the hostname to the operator's country/ASN.
 
-Add a family member:
+Add a member:
 
 ```bash
 docker exec nuvio-torrserver /app/addon adduser --name "Mom"
@@ -363,7 +363,7 @@ quality preferences.
    signed `/play` reverse-proxy with Range passthrough, idle sweeper. Confirm seeking
    and multi-stream selection end to end.
 6. **Package + deploy** — Dockerfile, supervisord, compose example, README with the
-   Caddy snippet and `adduser` flow. Add a real family member and stream a season-pack
+   Caddy snippet and `adduser` flow. Add a real member and stream a season-pack
    episode start-to-finish.
 
 Ship each milestone building and runnable before starting the next.

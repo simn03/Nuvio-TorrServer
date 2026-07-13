@@ -13,7 +13,7 @@ import (
 // ErrNotFound is returned when a token has no matching user row.
 var ErrNotFound = errors.New("user not found")
 
-// User is a minted family member.
+// User is a minted member.
 type User struct {
 	Token     string
 	Name      string
