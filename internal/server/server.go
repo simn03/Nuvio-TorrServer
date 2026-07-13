@@ -4,11 +4,12 @@ package server
 import (
 	"context"
 	"errors"
-	"log"
+	"log/slog"
 	"net/http"
 	"time"
 
 	"nuvio-torrserver/internal/cinemeta"
+	"nuvio-torrserver/internal/logging"
 	"nuvio-torrserver/internal/prowlarr"
 	"nuvio-torrserver/internal/resolver"
 	"nuvio-torrserver/internal/settings"
@@ -61,6 +62,7 @@ func (s *Server) routes() http.Handler {
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Recoverer)
+	r.Use(requestLogger)
 	r.Use(corsStremio)
 
 	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
@@ -92,7 +94,7 @@ func (s *Server) Run(ctx context.Context) error {
 
 	errCh := make(chan error, 1)
 	go func() {
-		log.Printf("addon listening on %s", s.http.Addr)
+		slog.Info("addon listening", "addr", s.http.Addr)
 		if err := s.http.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 			return
@@ -102,11 +104,14 @@ func (s *Server) Run(ctx context.Context) error {
 
 	select {
 	case err := <-errCh:
+		if err != nil {
+			slog.Error("server exited", "err", err)
+		}
 		return err
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		log.Printf("shutting down...")
+		slog.Info("shutting down")
 		return s.http.Shutdown(shutdownCtx)
 	}
 }
@@ -122,12 +127,38 @@ func (s *Server) purgeCacheLoop(ctx context.Context) {
 			return
 		case <-ticker.C:
 			if n, err := s.store.PurgeExpiredCache(); err != nil {
-				log.Printf("cache purge error: %v", err)
+				slog.Error("cache purge failed", "err", err)
 			} else if n > 0 {
-				log.Printf("purged %d expired cache rows", n)
+				slog.Info("purged expired cache rows", "count", n)
 			}
 		}
 	}
+}
+
+// requestLogger logs every request's method, path, status, response size, and
+// duration, tagged with the chi request id, and stashes that id into context
+// so downstream slog calls (resolver, prowlarr, torrserver, ...) inherit it —
+// this is the primary tool for profiling where pipeline time goes.
+func requestLogger(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reqID := middleware.GetReqID(r.Context())
+		ctx := logging.WithRequestID(r.Context(), reqID)
+		r = r.WithContext(ctx)
+
+		ww := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
+		start := time.Now()
+		defer func() {
+			slog.InfoContext(ctx, "request",
+				"method", r.Method,
+				"path", r.URL.Path,
+				"status", ww.Status(),
+				"bytes", ww.BytesWritten(),
+				"dur", time.Since(start),
+				"remote", r.RemoteAddr,
+			)
+		}()
+		next.ServeHTTP(ww, r)
+	})
 }
 
 // corsStremio applies the permissive CORS headers Stremio expects.

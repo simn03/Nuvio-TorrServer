@@ -1,6 +1,7 @@
 package server
 
 import (
+	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -12,6 +13,7 @@ func (s *Server) requireToken(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		token := chi.URLParam(r, "token")
 		if token == "" || !s.store.IsValid(token) {
+			slog.WarnContext(r.Context(), "rejected invalid/revoked token", "path", r.URL.Path)
 			http.Error(w, "forbidden: invalid or revoked token", http.StatusForbidden)
 			return
 		}

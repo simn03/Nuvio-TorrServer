@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"html/template"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -80,9 +81,11 @@ func (s *Server) handleConfigurePost(w http.ResponseWriter, r *http.Request) {
 	cfg = config.Normalize(cfg)
 
 	if err := s.store.SetConfig(token, cfg); err != nil {
+		slog.ErrorContext(r.Context(), "configure: save failed", "err", err)
 		http.Error(w, "failed to save config", http.StatusInternalServerError)
 		return
 	}
+	slog.InfoContext(r.Context(), "configure: saved", "sort", cfg.Sort, "min_seeders", cfg.MinSeeders, "max_results", cfg.MaxResults)
 	s.renderConfig(r.Context(), w, cfg, true)
 }
 
@@ -110,6 +113,7 @@ func (s *Server) indexerItems(ctx context.Context, selected []int) ([]indexerIte
 	defer cancel()
 	list, err := s.prow.Indexers(ctx)
 	if err != nil {
+		slog.WarnContext(ctx, "configure: indexer list unavailable", "err", err)
 		return nil, false
 	}
 	sel := make(map[int]bool, len(selected))

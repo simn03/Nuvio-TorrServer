@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"sort"
@@ -160,10 +161,12 @@ type Indexer struct {
 // indexerIds is non-empty the search is limited to those indexers; otherwise
 // Prowlarr queries all enabled indexers.
 func (c *Client) Search(ctx context.Context, query string, categories, indexerIds []int) ([]Result, error) {
+	start := time.Now()
 	key := cacheKey(query, categories, indexerIds)
 	if data, ok := c.cache.ProwlarrCacheGet(key); ok {
 		var cached []Result
 		if json.Unmarshal(data, &cached) == nil {
+			slog.DebugContext(ctx, "prowlarr cache hit", "query", query, "categories", categories, "results", len(cached))
 			return cached, nil
 		}
 	}
@@ -192,10 +195,12 @@ func (c *Client) Search(ctx context.Context, query string, categories, indexerId
 
 	resp, err := c.http.Do(req)
 	if err != nil {
+		slog.ErrorContext(ctx, "prowlarr search failed", "query", query, "categories", categories, "dur", time.Since(start), "err", err)
 		return nil, fmt.Errorf("prowlarr request: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
+		slog.ErrorContext(ctx, "prowlarr search bad status", "query", query, "categories", categories, "status", resp.StatusCode, "dur", time.Since(start))
 		return nil, fmt.Errorf("prowlarr status %d", resp.StatusCode)
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
@@ -211,6 +216,8 @@ func (c *Client) Search(ctx context.Context, query string, categories, indexerId
 	for _, r := range raw {
 		results = append(results, Result(r))
 	}
+
+	slog.InfoContext(ctx, "prowlarr search", "query", query, "categories", categories, "indexers", indexerIds, "results", len(results), "dur", time.Since(start))
 
 	if enc, err := json.Marshal(results); err == nil {
 		_ = c.cache.ProwlarrCacheSet(key, enc, c.ttl)
@@ -245,6 +252,7 @@ func sortedCopy(in []int) []int {
 
 // Indexers lists Prowlarr's configured indexers (for the per-user selection UI).
 func (c *Client) Indexers(ctx context.Context) ([]Indexer, error) {
+	start := time.Now()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/api/v1/indexer", nil)
 	if err != nil {
 		return nil, err
@@ -254,10 +262,12 @@ func (c *Client) Indexers(ctx context.Context) ([]Indexer, error) {
 
 	resp, err := c.http.Do(req)
 	if err != nil {
+		slog.ErrorContext(ctx, "prowlarr indexers failed", "dur", time.Since(start), "err", err)
 		return nil, fmt.Errorf("prowlarr indexers: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
+		slog.ErrorContext(ctx, "prowlarr indexers bad status", "status", resp.StatusCode, "dur", time.Since(start))
 		return nil, fmt.Errorf("prowlarr indexers status %d", resp.StatusCode)
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
@@ -268,5 +278,6 @@ func (c *Client) Indexers(ctx context.Context) ([]Indexer, error) {
 	if err := json.Unmarshal(body, &idx); err != nil {
 		return nil, fmt.Errorf("prowlarr indexers decode: %w", err)
 	}
+	slog.DebugContext(ctx, "prowlarr indexers", "count", len(idx), "dur", time.Since(start))
 	return idx, nil
 }

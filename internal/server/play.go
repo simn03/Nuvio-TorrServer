@@ -2,7 +2,7 @@ package server
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -36,9 +36,11 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 	case nil:
 		// ok
 	case sign.ErrExpired:
+		slog.WarnContext(r.Context(), "play: link expired", "hash", hash, "index", index)
 		http.Error(w, "link expired", http.StatusGone)
 		return
 	default:
+		slog.WarnContext(r.Context(), "play: bad signature", "hash", hash, "index", index)
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
@@ -52,6 +54,8 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	start := time.Now()
+	slog.DebugContext(r.Context(), "play: proxying", "hash", hash, "index", index, "range", r.Header.Get("Range"))
 	proxy := &httputil.ReverseProxy{
 		Director: func(req *http.Request) {
 			req.URL.Scheme = target.Scheme
@@ -63,7 +67,7 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 			// TorrServer serves partial content for seeking.
 		},
 		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, e error) {
-			log.Printf("play proxy error (hash=%s idx=%d): %v", hash, index, e)
+			slog.ErrorContext(r.Context(), "play: proxy error", "hash", hash, "index", index, "dur", time.Since(start), "err", e)
 			http.Error(w, "upstream error", http.StatusBadGateway)
 		},
 	}

@@ -6,6 +6,7 @@ package resolver
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"path"
 	"strconv"
 	"strings"
@@ -83,6 +84,7 @@ func ParseID(kind, id string) (MediaID, error) {
 // Candidates runs the metadata + search + rank pipeline and returns the ranked
 // candidates (no TorrServer interaction). This is the pure, network-only path.
 func (r *Resolver) Candidates(ctx context.Context, kind, id string, cfg config.UserConfig) ([]rank.Candidate, MediaID, error) {
+	total := time.Now()
 	mid, err := ParseID(kind, id)
 	if err != nil {
 		return nil, MediaID{}, err
@@ -92,18 +94,32 @@ func (r *Resolver) Candidates(ctx context.Context, kind, id string, cfg config.U
 	if mid.Series {
 		metaKind = "series"
 	}
+	step := time.Now()
 	meta, err := r.cine.Get(ctx, metaKind, mid.IMDb)
 	if err != nil {
+		slog.ErrorContext(ctx, "resolve: cinemeta lookup failed", "id", id, "dur", time.Since(step), "err", err)
 		return nil, mid, fmt.Errorf("cinemeta: %w", err)
 	}
+	cinemetaDur := time.Since(step)
 
 	queries, cats := buildQueries(meta, mid)
+	step = time.Now()
 	results, err := r.searchAll(ctx, queries, cats, cfg.Indexers)
 	if err != nil {
+		slog.ErrorContext(ctx, "resolve: search failed", "id", id, "queries", queries, "dur", time.Since(step), "err", err)
 		return nil, mid, err
 	}
+	searchDur := time.Since(step)
 
-	return rank.Rank(results, cfg), mid, nil
+	step = time.Now()
+	candidates := rank.Rank(results, cfg)
+	slog.InfoContext(ctx, "resolve: candidates ready",
+		"id", id, "title", meta.Name, "queries", queries,
+		"raw_results", len(results), "candidates", len(candidates),
+		"cinemeta_dur", cinemetaDur, "search_dur", searchDur, "rank_dur", time.Since(step),
+		"total_dur", time.Since(total),
+	)
+	return candidates, mid, nil
 }
 
 // Resolve returns playable streams: it ranks candidates, then adds each to
@@ -111,6 +127,7 @@ func (r *Resolver) Candidates(ctx context.Context, kind, id string, cfg config.U
 // selection for series, largest video file for movies), preloading if enabled.
 // Candidates that can't be added are dropped.
 func (r *Resolver) Resolve(ctx context.Context, kind, id string, cfg config.UserConfig) ([]Stream, error) {
+	start := time.Now()
 	candidates, mid, err := r.Candidates(ctx, kind, id, cfg)
 	if err != nil {
 		return nil, err
@@ -132,6 +149,7 @@ func (r *Resolver) Resolve(ctx context.Context, kind, id string, cfg config.User
 			defer func() { <-sem }()
 			s, err := r.enrich(ctx, c, mid)
 			if err != nil {
+				slog.WarnContext(ctx, "resolve: candidate dropped", "title", c.Result.Title, "err", err)
 				return
 			}
 			streams[i] = s
@@ -147,11 +165,13 @@ func (r *Resolver) Resolve(ctx context.Context, kind, id string, cfg config.User
 			out = append(out, streams[i])
 		}
 	}
+	slog.InfoContext(ctx, "resolve: complete", "id", id, "candidates", len(candidates), "streams", len(out), "dur", time.Since(start))
 	return out, nil
 }
 
 // enrich adds one candidate to TorrServer and selects its file index.
 func (r *Resolver) enrich(ctx context.Context, c rank.Candidate, mid MediaID) (Stream, error) {
+	start := time.Now()
 	link := c.Result.Link()
 	if link == "" {
 		return Stream{}, fmt.Errorf("no link")
@@ -171,6 +191,7 @@ func (r *Resolver) enrich(ctx context.Context, c rank.Candidate, mid MediaID) (S
 		_ = r.ts.Preload(pctx, hash, index)
 		cancel()
 	}
+	slog.DebugContext(ctx, "resolve: candidate enriched", "title", c.Result.Title, "hash", hash, "file_index", index, "dur", time.Since(start))
 	return Stream{Candidate: c, Hash: hash, FileIndex: index}, nil
 }
 
@@ -211,8 +232,10 @@ func (r *Resolver) searchAll(ctx context.Context, queries []string, cats, indexe
 		wg.Add(1)
 		go func(i int, q string) {
 			defer wg.Done()
+			qStart := time.Now()
 			res, err := r.prow.Search(ctx, q, cats, indexerIds)
 			if err != nil {
+				slog.WarnContext(ctx, "resolve: query failed", "query", q, "dur", time.Since(qStart), "err", err)
 				errs[i] = err
 				return
 			}

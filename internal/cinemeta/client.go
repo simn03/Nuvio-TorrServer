@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"regexp"
 	"time"
@@ -57,9 +58,11 @@ type cinemetaResponse struct {
 
 // Get returns metadata for the given kind ("movie"|"series") and IMDb id.
 func (c *Client) Get(ctx context.Context, kind, imdb string) (Meta, error) {
+	start := time.Now()
 	if data, ok := c.cache.CinemetaCacheGet(imdb, kind); ok {
 		var m Meta
 		if json.Unmarshal(data, &m) == nil {
+			slog.DebugContext(ctx, "cinemeta cache hit", "imdb", imdb, "kind", kind)
 			return m, nil
 		}
 	}
@@ -71,10 +74,12 @@ func (c *Client) Get(ctx context.Context, kind, imdb string) (Meta, error) {
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
+		slog.ErrorContext(ctx, "cinemeta request failed", "imdb", imdb, "kind", kind, "dur", time.Since(start), "err", err)
 		return Meta{}, fmt.Errorf("cinemeta request: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
+		slog.ErrorContext(ctx, "cinemeta bad status", "imdb", imdb, "kind", kind, "status", resp.StatusCode, "dur", time.Since(start))
 		return Meta{}, fmt.Errorf("cinemeta status %d for %s", resp.StatusCode, imdb)
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
@@ -93,6 +98,8 @@ func (c *Client) Get(ctx context.Context, kind, imdb string) (Meta, error) {
 	if m.Name == "" {
 		return Meta{}, fmt.Errorf("cinemeta: empty name for %s", imdb)
 	}
+
+	slog.InfoContext(ctx, "cinemeta fetch", "imdb", imdb, "kind", kind, "name", m.Name, "year", m.Year, "dur", time.Since(start))
 
 	if enc, err := json.Marshal(m); err == nil {
 		_ = c.cache.CinemetaCacheSet(imdb, kind, enc, c.ttl)

@@ -6,11 +6,13 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"nuvio-torrserver/admin"
+	"nuvio-torrserver/internal/logging"
 	"nuvio-torrserver/internal/server"
 	"nuvio-torrserver/internal/settings"
 	"nuvio-torrserver/internal/store"
@@ -58,6 +60,7 @@ func runServe() error {
 	if err != nil {
 		return err
 	}
+	logging.Setup(set.LogLevel, set.LogFormat)
 
 	st, err := store.Open(set.DBPath)
 	if err != nil {
@@ -67,6 +70,15 @@ func runServe() error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	slog.Info("settings loaded",
+		"port", set.Port,
+		"torrserver_url", set.TorrServerURL,
+		"cinemeta_url", set.CinemetaURL,
+		"torrserver_preload", set.TorrServerPreload,
+		"torrent_idle_ttl", set.TorrentIdleTTL,
+		"log_level", set.LogLevel,
+	)
 
 	srv := server.New(set, st)
 	return srv.Run(ctx)

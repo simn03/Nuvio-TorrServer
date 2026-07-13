@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -45,6 +46,10 @@ type torrent struct {
 
 // action posts a body to /torrents and decodes the torrent JSON response.
 func (c *Client) action(ctx context.Context, body map[string]any) (*torrent, error) {
+	start := time.Now()
+	op, _ := body["action"].(string)
+	hash, _ := body["hash"].(string)
+
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
@@ -56,10 +61,12 @@ func (c *Client) action(ctx context.Context, body map[string]any) (*torrent, err
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := c.http.Do(req)
 	if err != nil {
+		slog.ErrorContext(ctx, "torrserver request failed", "action", op, "hash", hash, "dur", time.Since(start), "err", err)
 		return nil, fmt.Errorf("torrserver request: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
+		slog.ErrorContext(ctx, "torrserver bad status", "action", op, "hash", hash, "status", resp.StatusCode, "dur", time.Since(start))
 		return nil, fmt.Errorf("torrserver status %d", resp.StatusCode)
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
@@ -68,29 +75,34 @@ func (c *Client) action(ctx context.Context, body map[string]any) (*torrent, err
 	}
 	// "rem" returns an empty body; tolerate that.
 	if len(bytes.TrimSpace(data)) == 0 {
+		slog.DebugContext(ctx, "torrserver action", "action", op, "hash", hash, "dur", time.Since(start))
 		return &torrent{}, nil
 	}
 	var t torrent
 	if err := json.Unmarshal(data, &t); err != nil {
 		return nil, fmt.Errorf("torrserver decode: %w", err)
 	}
+	slog.DebugContext(ctx, "torrserver action", "action", op, "hash", t.Hash, "files", len(t.FileStats), "dur", time.Since(start))
 	return &t, nil
 }
 
 // Add adds a torrent by magnet/hash/link and returns its hash plus any files
 // already known (metadata may still be loading — use EnsureFiles to wait).
 func (c *Client) Add(ctx context.Context, link string) (string, []File, error) {
+	start := time.Now()
 	t, err := c.action(ctx, map[string]any{
 		"action":     "add",
 		"link":       link,
 		"save_to_db": false,
 	})
 	if err != nil {
+		slog.ErrorContext(ctx, "torrserver add failed", "dur", time.Since(start), "err", err)
 		return "", nil, err
 	}
 	if t.Hash == "" {
 		return "", nil, fmt.Errorf("torrserver add: no hash returned")
 	}
+	slog.InfoContext(ctx, "torrserver add", "hash", t.Hash, "files", len(t.FileStats), "dur", time.Since(start))
 	return t.Hash, t.FileStats, nil
 }
 
@@ -99,6 +111,7 @@ func (c *Client) Add(ctx context.Context, link string) (string, []File, error) {
 func (c *Client) Files(ctx context.Context, hash string) ([]File, error) {
 	t, err := c.action(ctx, map[string]any{"action": "get", "hash": hash})
 	if err != nil {
+		slog.ErrorContext(ctx, "torrserver files failed", "hash", hash, "err", err)
 		return nil, err
 	}
 	return t.FileStats, nil
@@ -106,16 +119,21 @@ func (c *Client) Files(ctx context.Context, hash string) ([]File, error) {
 
 // EnsureFiles polls Files until the list is non-empty or the deadline passes.
 func (c *Client) EnsureFiles(ctx context.Context, hash string, wait time.Duration) ([]File, error) {
-	deadline := time.Now().Add(wait)
+	start := time.Now()
+	deadline := start.Add(wait)
+	attempts := 0
 	for {
+		attempts++
 		files, err := c.Files(ctx, hash)
 		if err != nil {
 			return nil, err
 		}
 		if len(files) > 0 {
+			slog.DebugContext(ctx, "torrserver ensureFiles resolved", "hash", hash, "files", len(files), "attempts", attempts, "dur", time.Since(start))
 			return files, nil
 		}
 		if time.Now().After(deadline) {
+			slog.WarnContext(ctx, "torrserver ensureFiles gave up", "hash", hash, "attempts", attempts, "dur", time.Since(start))
 			return files, nil // give up; caller falls back to index 0
 		}
 		select {
@@ -135,16 +153,19 @@ func (c *Client) Remove(ctx context.Context, hash string) error {
 // Preload asks TorrServer to buffer the start of a file before playback. Best
 // effort and short: errors are the caller's to ignore.
 func (c *Client) Preload(ctx context.Context, hash string, index int) error {
+	start := time.Now()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.preloadURL(hash, index), nil)
 	if err != nil {
 		return err
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
+		slog.WarnContext(ctx, "torrserver preload failed", "hash", hash, "index", index, "dur", time.Since(start), "err", err)
 		return err
 	}
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
+	slog.DebugContext(ctx, "torrserver preload", "hash", hash, "index", index, "dur", time.Since(start))
 	return nil
 }
 

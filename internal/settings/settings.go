@@ -26,6 +26,8 @@ type Settings struct {
 	CinemetaCacheTTL    time.Duration
 	TorrServerPreload   bool
 	TorrentIdleTTL      time.Duration
+	LogLevel            string // "debug" | "info" | "warn" | "error"
+	LogFormat           string // "text" | "json"
 }
 
 // Load reads settings from the environment, applying defaults from §4 and
@@ -42,6 +44,8 @@ func Load() (*Settings, error) {
 		DBPath:              getenv("DB_PATH", "/data/addon/addon.db"),
 		SigningSecret:       os.Getenv("SIGNING_SECRET"),
 		TorrServerPreload:   getbool("TORRSERVER_PRELOAD", true),
+		LogLevel:            getenv("LOG_LEVEL", "info"),
+		LogFormat:           getenv("LOG_FORMAT", "text"),
 	}
 
 	var err error

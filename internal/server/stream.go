@@ -3,8 +3,10 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"nuvio-torrserver/internal/rank"
 
@@ -31,20 +33,24 @@ type streamBehaviorHints struct {
 // returns a ranked stream list. In milestone 4 the URL is the raw source link;
 // milestone 5 replaces it with a signed /play URL backed by TorrServer.
 func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
 	token := chi.URLParam(r, "token")
 	typ := chi.URLParam(r, "type")
 	id := chi.URLParam(r, "id")
+	ctx := r.Context()
 
 	cfg, err := s.store.GetConfig(token)
 	if err != nil {
+		slog.ErrorContext(ctx, "stream: config load failed", "type", typ, "id", id, "err", err)
 		http.Error(w, "failed to load config", http.StatusInternalServerError)
 		return
 	}
 
-	resolved, err := s.resolver.Resolve(r.Context(), typ, id, cfg)
+	resolved, err := s.resolver.Resolve(ctx, typ, id, cfg)
 	if err != nil {
 		// Return an empty (valid) list rather than an error so Stremio shows
 		// "no streams" instead of failing the addon.
+		slog.ErrorContext(ctx, "stream: resolve failed", "type", typ, "id", id, "dur", time.Since(start), "err", err)
 		writeStreams(w, nil)
 		return
 	}
@@ -60,6 +66,7 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 			},
 		})
 	}
+	slog.InfoContext(ctx, "stream: served", "type", typ, "id", id, "streams", len(streams), "dur", time.Since(start))
 	writeStreams(w, streams)
 }
 

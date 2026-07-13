@@ -2,7 +2,7 @@ package torrserver
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"sync"
 	"time"
 )
@@ -58,8 +58,10 @@ func (s *Sweeper) Run(ctx context.Context) {
 
 // sweep removes hashes idle beyond the TTL. Exposed logic kept small for testing.
 func (s *Sweeper) sweep(ctx context.Context, now time.Time) {
+	start := time.Now()
 	var stale []string
 	s.mu.Lock()
+	tracked := len(s.lastSeen)
 	for hash, seen := range s.lastSeen {
 		if now.Sub(seen) > s.ttl {
 			stale = append(stale, hash)
@@ -68,12 +70,20 @@ func (s *Sweeper) sweep(ctx context.Context, now time.Time) {
 	}
 	s.mu.Unlock()
 
+	removed := 0
 	for _, hash := range stale {
 		rmCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		if err := s.client.Remove(rmCtx, hash); err != nil {
-			log.Printf("sweeper: remove %s: %v", hash, err)
+			slog.Error("sweeper: remove failed", "hash", hash, "err", err)
+		} else {
+			removed++
 		}
 		cancel()
+	}
+	if len(stale) > 0 {
+		slog.Info("sweeper: cycle complete", "tracked", tracked, "stale", len(stale), "removed", removed, "dur", time.Since(start))
+	} else {
+		slog.Debug("sweeper: cycle complete", "tracked", tracked, "stale", 0, "dur", time.Since(start))
 	}
 }
 
