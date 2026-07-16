@@ -41,13 +41,16 @@ func New(set *settings.Settings, st *store.Store) *Server {
 	sweeper := torrserver.NewSweeper(torr, set.TorrentIdleTTL)
 
 	s := &Server{
-		set:      set,
-		store:    st,
-		resolver: resolver.New(cine, prow, torr, sweeper, set.TorrServerPreload),
-		prow:     prow,
-		torr:     torr,
-		sweeper:  sweeper,
-		signer:   sign.New(set.SigningSecret),
+		set:   set,
+		store: st,
+		resolver: resolver.New(cine, prow, torr, sweeper, set.TorrServerPreload,
+			resolver.WithSearchTimeout(set.ProwlarrSearchTimeout),
+			resolver.WithEnrichCache(st),
+		),
+		prow:    prow,
+		torr:    torr,
+		sweeper: sweeper,
+		signer:  sign.New(set.SigningSecret),
 	}
 	s.http = &http.Server{
 		Addr:              ":" + set.Port,

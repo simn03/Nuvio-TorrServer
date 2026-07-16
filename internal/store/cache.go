@@ -58,7 +58,32 @@ func (s *Store) ProwlarrCacheSet(key string, payload []byte, ttl time.Duration) 
 	return err
 }
 
-// PurgeExpiredCache deletes expired rows from both cache tables and returns the
+// EnrichCacheGet returns the cached file index for key if present and unexpired.
+func (s *Store) EnrichCacheGet(key string) (int, bool) {
+	var (
+		index     int
+		expiresAt int64
+	)
+	err := s.db.QueryRow(
+		`SELECT file_index, expires_at FROM enrich_cache WHERE cache_key = ?`, key,
+	).Scan(&index, &expiresAt)
+	if err != nil || expiresAt <= nowMs() {
+		return 0, false
+	}
+	return index, true
+}
+
+// EnrichCacheSet upserts a play-time file-selection entry with the given TTL.
+func (s *Store) EnrichCacheSet(key string, index int, ttl time.Duration) error {
+	_, err := s.db.Exec(
+		`INSERT INTO enrich_cache (cache_key, file_index, expires_at) VALUES (?, ?, ?)
+		 ON CONFLICT(cache_key) DO UPDATE SET file_index = excluded.file_index, expires_at = excluded.expires_at`,
+		key, index, nowMs()+ttl.Milliseconds(),
+	)
+	return err
+}
+
+// PurgeExpiredCache deletes expired rows from the cache tables and returns the
 // number removed. Intended to run periodically.
 func (s *Store) PurgeExpiredCache() (int64, error) {
 	now := nowMs()
@@ -66,6 +91,7 @@ func (s *Store) PurgeExpiredCache() (int64, error) {
 	for _, q := range []string{
 		`DELETE FROM cinemeta_cache WHERE expires_at <= ?`,
 		`DELETE FROM prowlarr_cache WHERE expires_at <= ?`,
+		`DELETE FROM enrich_cache WHERE expires_at <= ?`,
 	} {
 		res, err := s.db.Exec(q, now)
 		if err != nil {

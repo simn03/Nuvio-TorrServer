@@ -124,24 +124,33 @@ func (c *Client) RegisterAddLink(hash, link string) {
 	c.addLink[hash] = link
 }
 
-// EnsureAdded adds a registered hash to TorrServer. Unregistered hashes are
-// assumed to have already been added during resolution.
-func (c *Client) EnsureAdded(ctx context.Context, hash string) error {
+// EnsureAdded adds a registered token to TorrServer and returns the torrent's
+// real infohash. For real-infohash candidates the returned hash equals the
+// input. For no-infohash candidates the input is a synthetic token that maps to
+// a downloadUrl/magnet; adding it here is how we learn the real infohash (kept
+// off the stream-list path). Unregistered tokens are assumed already added and
+// returned unchanged.
+func (c *Client) EnsureAdded(ctx context.Context, hash string) (string, error) {
 	key := strings.ToLower(strings.TrimSpace(hash))
 	c.mu.RLock()
 	link := c.addLink[key]
 	c.mu.RUnlock()
 	if link == "" {
-		return nil
+		return hash, nil
 	}
 	addedHash, _, err := c.Add(ctx, link)
 	if err != nil {
-		return err
+		return "", err
 	}
-	if addedHash != "" && !strings.EqualFold(addedHash, key) {
-		slog.WarnContext(ctx, "torrserver lazy add hash mismatch", "requested_hash", hash, "added_hash", addedHash)
+	if addedHash == "" {
+		return hash, nil
 	}
-	return nil
+	if !strings.EqualFold(addedHash, key) {
+		// Synthetic token resolved to its real infohash; register the real hash
+		// too so repeat plays and the sweeper resolve consistently.
+		c.RegisterAddLink(addedHash, link)
+	}
+	return addedHash, nil
 }
 
 // Files returns the current file list for a hash (may be empty if metadata is

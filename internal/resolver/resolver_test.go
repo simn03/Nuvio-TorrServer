@@ -202,66 +202,51 @@ func TestFileWaitForMediaCapsMoviesOnly(t *testing.T) {
 	}
 }
 
-func TestAddWaitForMediaCapsAllMedia(t *testing.T) {
-	r := &Resolver{fileWait: 8 * time.Second}
-	if got := r.addWaitForMedia(MediaID{}); got != addWaitCap {
-		t.Fatalf("movie add wait = %v, want %v", got, addWaitCap)
-	}
-	if got := r.addWaitForMedia(MediaID{Series: true, Season: 1, Episode: 1}); got != addWaitCap {
-		t.Fatalf("series add wait = %v, want %v", got, addWaitCap)
-	}
-
-	r.fileWait = time.Second
-	if got := r.addWaitForMedia(MediaID{}); got != time.Second {
-		t.Fatalf("short configured movie add wait = %v, want 1s", got)
+func TestPlanMovieStreamsFileOne(t *testing.T) {
+	r := &Resolver{}
+	c := rank.Candidate{Parsed: rank.Parse("Movie 2026 1080p WEB-DL")}
+	s := r.plan(c, MediaID{}, "hash")
+	if s.FileIndex != 1 || s.Season != 0 || s.Episode != 0 {
+		t.Fatalf("movie should stream file 1 with no deferred selection, got %+v", s)
 	}
 }
 
-func TestLazyPlayableHashForMovieWithInfoHash(t *testing.T) {
-	c := rank.Candidate{
-		Result: prowlarr.Result{InfoHash: "ABCDEF1234567890ABCDEF1234567890ABCDEF12"},
-		Parsed: rank.Parse("Movie 2026 1080p WEB-DL"),
-	}
-	hash, ok := lazyPlayableHash(c, MediaID{})
-	if !ok {
-		t.Fatal("expected movie with infohash to be lazy-playable")
-	}
-	if hash != "abcdef1234567890abcdef1234567890abcdef12" {
-		t.Fatalf("hash = %q", hash)
+func TestPlanExactEpisodeStreamsFileOne(t *testing.T) {
+	r := &Resolver{}
+	c := rank.Candidate{Parsed: rank.Parse("Frieren S02E09 1080p WEB-DL")}
+	s := r.plan(c, MediaID{Series: true, Season: 2, Episode: 9}, "hash")
+	if s.FileIndex != 1 {
+		t.Fatalf("exact episode should stream file 1, got FileIndex=%d", s.FileIndex)
 	}
 }
 
-func TestLazyPlayableHashRejectsMovieWithoutInfoHash(t *testing.T) {
-	c := rank.Candidate{
-		Result: prowlarr.Result{DownloadURL: "http://prowlarr/download"},
-		Parsed: rank.Parse("Movie 2026 1080p WEB-DL"),
+func TestPlanSeasonPackDefersSelection(t *testing.T) {
+	r := &Resolver{}
+	c := rank.Candidate{Parsed: rank.Parse("Frieren S02 1080p WEB-DL")}
+	s := r.plan(c, MediaID{Series: true, Season: 2, Episode: 9}, "hash")
+	if s.FileIndex != AutoSelectFile {
+		t.Fatalf("season pack must defer file selection (AutoSelectFile), got %d", s.FileIndex)
 	}
-	if _, ok := lazyPlayableHash(c, MediaID{}); ok {
-		t.Fatal("movie without infohash must be added to discover its hash")
-	}
-}
-
-func TestLazyPlayableHashForExactEpisodeWithInfoHash(t *testing.T) {
-	c := rank.Candidate{
-		Result: prowlarr.Result{InfoHash: "ABCDEF1234567890ABCDEF1234567890ABCDEF12"},
-		Parsed: rank.Parse("Frieren S02E09 1080p WEB-DL"),
-	}
-	hash, ok := lazyPlayableHash(c, MediaID{Series: true, Season: 2, Episode: 9})
-	if !ok {
-		t.Fatal("expected exact episode with infohash to be lazy-playable")
-	}
-	if hash != "abcdef1234567890abcdef1234567890abcdef12" {
-		t.Fatalf("hash = %q", hash)
+	if s.Season != 2 || s.Episode != 9 {
+		t.Fatalf("deferred pack must carry season/episode for /play, got s=%d e=%d", s.Season, s.Episode)
 	}
 }
 
-func TestLazyPlayableHashRejectsSeasonPack(t *testing.T) {
-	c := rank.Candidate{
-		Result: prowlarr.Result{InfoHash: "abcdef1234567890abcdef1234567890abcdef12"},
-		Parsed: rank.Parse("Frieren S02 1080p WEB-DL"),
+func TestDeferSelection(t *testing.T) {
+	cases := []struct {
+		title  string
+		mid    MediaID
+		defer_ bool
+	}{
+		{"Movie 2026 1080p WEB-DL", MediaID{}, false},
+		{"Frieren S02E09 1080p WEB-DL", MediaID{Series: true, Season: 2, Episode: 9}, false},
+		{"Frieren S02 1080p WEB-DL", MediaID{Series: true, Season: 2, Episode: 9}, true},
+		{"Frieren Season 2 Complete", MediaID{Series: true, Season: 2, Episode: 9}, true},
 	}
-	if _, ok := lazyPlayableHash(c, MediaID{Series: true, Season: 2, Episode: 9}); ok {
-		t.Fatal("season pack must not be lazy-playable because file index is unknown")
+	for _, tc := range cases {
+		if got := deferSelection(rank.Parse(tc.title), tc.mid); got != tc.defer_ {
+			t.Errorf("deferSelection(%q) = %v, want %v", tc.title, got, tc.defer_)
+		}
 	}
 }
 
