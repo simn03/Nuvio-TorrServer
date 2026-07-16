@@ -12,22 +12,23 @@ import (
 
 // Settings is the fully-resolved process configuration.
 type Settings struct {
-	Port                string
-	PublicHost          string // may be empty; server falls back to request Host
-	TorrServerURL       string
-	ProwlarrURL         string
-	ProwlarrAPIKey      string
-	ProwlarrInsecureTLS bool
-	CinemetaURL         string
-	DBPath              string
-	SigningSecret       string
-	PlayURLTTL          time.Duration
-	ProwlarrCacheTTL    time.Duration
-	CinemetaCacheTTL    time.Duration
-	TorrServerPreload   bool
-	TorrentIdleTTL      time.Duration
-	LogLevel            string // "debug" | "info" | "warn" | "error"
-	LogFormat           string // "text" | "json"
+	Port                  string
+	PublicHost            string // may be empty; server falls back to request Host
+	TorrServerURL         string
+	ProwlarrURL           string
+	ProwlarrAPIKey        string
+	ProwlarrInsecureTLS   bool
+	CinemetaURL           string
+	DBPath                string
+	SigningSecret         string
+	PlayURLTTL            time.Duration
+	ProwlarrCacheTTL      time.Duration
+	ProwlarrSearchTimeout time.Duration
+	CinemetaCacheTTL      time.Duration
+	TorrServerPreload     bool
+	TorrentIdleTTL        time.Duration
+	LogLevel              string // "debug" | "info" | "warn" | "error"
+	LogFormat             string // "text" | "json"
 }
 
 // Load reads settings from the environment, applying defaults from §4 and
@@ -53,6 +54,12 @@ func Load() (*Settings, error) {
 		return nil, err
 	}
 	if s.ProwlarrCacheTTL, err = getdur("PROWLARR_CACHE_TTL", 12*time.Hour); err != nil {
+		return nil, err
+	}
+	// Per-query search deadline: a slow indexer past this is cut so it can't
+	// hold the whole stream response. Results it would have returned surface on
+	// a later fetch via the accumulating Prowlarr cache.
+	if s.ProwlarrSearchTimeout, err = getdur("PROWLARR_SEARCH_TIMEOUT", 12*time.Second); err != nil {
 		return nil, err
 	}
 	if s.CinemetaCacheTTL, err = getdur("CINEMETA_CACHE_TTL", 720*time.Hour); err != nil {

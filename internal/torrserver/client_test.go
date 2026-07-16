@@ -79,8 +79,12 @@ func TestEnsureAddedUsesRegisteredLink(t *testing.T) {
 
 	c := New(srv.URL)
 	c.RegisterAddLink("ABC123", "magnet:?xt=urn:btih:abc123")
-	if err := c.EnsureAdded(context.Background(), "abc123"); err != nil {
+	got, err := c.EnsureAdded(context.Background(), "abc123")
+	if err != nil {
 		t.Fatalf("EnsureAdded: %v", err)
+	}
+	if got != "abc123" {
+		t.Fatalf("returned hash = %q, want abc123", got)
 	}
 	if gotLink != "magnet:?xt=urn:btih:abc123" {
 		t.Fatalf("link = %q", gotLink)
@@ -94,8 +98,36 @@ func TestEnsureAddedIgnoresUnknownHash(t *testing.T) {
 	defer srv.Close()
 
 	c := New(srv.URL)
-	if err := c.EnsureAdded(context.Background(), "missing"); err != nil {
+	got, err := c.EnsureAdded(context.Background(), "missing")
+	if err != nil {
 		t.Fatalf("EnsureAdded: %v", err)
+	}
+	if got != "missing" {
+		t.Fatalf("unknown hash should pass through unchanged, got %q", got)
+	}
+}
+
+// A no-infohash candidate is registered under a synthetic token; EnsureAdded
+// adds via its link and returns TorrServer's real infohash.
+func TestEnsureAddedResolvesSyntheticToken(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(torrent{Hash: "realinfohash"})
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL)
+	c.RegisterAddLink("synth0000token", "http://prowlarr/download?apikey=x")
+	got, err := c.EnsureAdded(context.Background(), "synth0000token")
+	if err != nil {
+		t.Fatalf("EnsureAdded: %v", err)
+	}
+	if got != "realinfohash" {
+		t.Fatalf("returned hash = %q, want realinfohash", got)
+	}
+	// The real hash must now also resolve to the link (for repeat plays/sweeper).
+	got2, err := c.EnsureAdded(context.Background(), "realinfohash")
+	if err != nil || got2 != "realinfohash" {
+		t.Fatalf("real hash re-add = %q, %v", got2, err)
 	}
 }
 

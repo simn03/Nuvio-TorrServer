@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/simn03/nuvio-p2p-http-addon/internal/resolver"
 	"github.com/simn03/nuvio-p2p-http-addon/internal/settings"
 	"github.com/simn03/nuvio-p2p-http-addon/internal/sign"
 	"github.com/simn03/nuvio-p2p-http-addon/internal/torrserver"
@@ -50,7 +51,7 @@ func TestPlayProxiesWithRange(t *testing.T) {
 
 	s := newPlayServer(upstream.URL)
 	exp := time.Now().Add(time.Hour).UnixMilli()
-	path := s.signer.PlayPath("abchash", 6, exp)
+	path := s.signer.PlayPath("abchash", 6, 0, 0, exp)
 
 	req := httptest.NewRequest(http.MethodGet, path, nil)
 	req.Header.Set("Range", "bytes=0-1023")
@@ -89,7 +90,7 @@ func TestPlayRejectsBadSigAndExpiry(t *testing.T) {
 
 	// Valid signature but expired -> 410.
 	expired := time.Now().Add(-time.Minute).UnixMilli()
-	path := s.signer.PlayPath("abchash", 6, expired)
+	path := s.signer.PlayPath("abchash", 6, 0, 0, expired)
 	req = httptest.NewRequest(http.MethodGet, path, nil)
 	rec = httptest.NewRecorder()
 	playRouter(s).ServeHTTP(rec, req)
@@ -122,7 +123,7 @@ func TestPlayLazyAddsRegisteredHashBeforeProxy(t *testing.T) {
 	s := newPlayServer(upstream.URL)
 	s.torr.RegisterAddLink("abchash", "magnet:?xt=urn:btih:abchash")
 	exp := time.Now().Add(time.Hour).UnixMilli()
-	path := s.signer.PlayPath("abchash", 1, exp)
+	path := s.signer.PlayPath("abchash", 1, 0, 0, exp)
 
 	req := httptest.NewRequest(http.MethodGet, path, nil)
 	rec := httptest.NewRecorder()
@@ -133,6 +134,48 @@ func TestPlayLazyAddsRegisteredHashBeforeProxy(t *testing.T) {
 	}
 	if len(actions) != 2 || actions[0] != "add" || actions[1] != "stream" {
 		t.Fatalf("actions = %v, want [add stream]", actions)
+	}
+}
+
+// A deferred season pack (index AutoSelectFile=0) must resolve the episode's
+// file at /play: add, read the file list, pick the S/E file, then stream it.
+func TestPlayResolvesDeferredSeasonPackFile(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/torrents":
+			// add + get both return the pack's file list.
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"hash": "packhash",
+				"file_stats": []map[string]any{
+					{"id": 1, "path": "Show/Show.S01E37.mkv", "length": 100},
+					{"id": 2, "path": "Show/Show.S01E38.mkv", "length": 100},
+				},
+			})
+		case "/stream/stream":
+			if !contains(r.URL.RawQuery, "index=2") {
+				t.Errorf("stream index = %q, want index=2 (S01E38)", r.URL.RawQuery)
+			}
+			w.WriteHeader(http.StatusPartialContent)
+			_, _ = w.Write([]byte("partialdata"))
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer upstream.Close()
+
+	s := newPlayServer(upstream.URL)
+	s.resolver = resolver.New(nil, nil, s.torr, s.sweeper, false)
+	s.torr.RegisterAddLink("packhash", "magnet:?xt=urn:btih:packhash")
+
+	exp := time.Now().Add(time.Hour).UnixMilli()
+	path := s.signer.PlayPath("packhash", resolver.AutoSelectFile, 1, 38, exp)
+
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	rec := httptest.NewRecorder()
+	playRouter(s).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusPartialContent {
+		t.Fatalf("status = %d, want 206", rec.Code)
 	}
 }
 

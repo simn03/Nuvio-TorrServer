@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/simn03/nuvio-p2p-http-addon/internal/resolver"
 	"github.com/simn03/nuvio-p2p-http-addon/internal/sign"
 
 	"github.com/go-chi/chi/v5"
@@ -33,8 +34,11 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sig := r.URL.Query().Get("sig")
+	// season/episode are present only for deferred season packs; absent => 0.
+	season, _ := strconv.Atoi(r.URL.Query().Get("s"))
+	episode, _ := strconv.Atoi(r.URL.Query().Get("e"))
 
-	switch err := s.signer.Verify(hash, index, exp, sig, time.Now().UnixMilli()); err {
+	switch err := s.signer.Verify(hash, index, season, episode, exp, sig, time.Now().UnixMilli()); err {
 	case nil:
 		// ok
 	case sign.ErrExpired:
@@ -47,16 +51,30 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.torr.EnsureAdded(r.Context(), hash); err != nil {
+	// EnsureAdded returns the torrent's real infohash: for no-infohash
+	// candidates the signed token is synthetic and only resolves to the real
+	// hash here, when the link is actually added.
+	realHash, err := s.torr.EnsureAdded(r.Context(), hash)
+	if err != nil {
 		slog.ErrorContext(r.Context(), "play: lazy add failed", "hash", hash, "index", index, "err", err)
 		http.Error(w, "upstream error", http.StatusBadGateway)
 		return
 	}
 
-	// Update last-access so the sweeper keeps this torrent alive while playing.
-	s.sweeper.Touch(hash)
+	// Deferred season pack: resolve the episode's file now (memoized), instead
+	// of blocking every candidate on TorrServer during stream-list generation.
+	if index == resolver.AutoSelectFile {
+		resolved, err := s.resolver.PlayFileIndex(r.Context(), realHash, season, episode)
+		if err != nil {
+			slog.WarnContext(r.Context(), "play: file selection fell back to 1", "hash", realHash, "season", season, "episode", episode, "err", err)
+		}
+		index = resolved
+	}
 
-	target, err := url.Parse(s.torr.StreamURL(hash, index))
+	// Update last-access so the sweeper keeps this torrent alive while playing.
+	s.sweeper.Touch(realHash)
+
+	target, err := url.Parse(s.torr.StreamURL(realHash, index))
 	if err != nil {
 		http.Error(w, "bad target", http.StatusInternalServerError)
 		return
@@ -87,10 +105,11 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 }
 
 // buildPlayURL constructs the absolute signed /play URL for a stream, using
-// PUBLIC_HOST when set and otherwise the request Host.
-func (s *Server) buildPlayURL(r *http.Request, hash string, index int) string {
+// PUBLIC_HOST when set and otherwise the request Host. season/episode are 0
+// except for deferred season packs, where /play needs them to pick the file.
+func (s *Server) buildPlayURL(r *http.Request, hash string, index, season, episode int) string {
 	exp := time.Now().Add(s.set.PlayURLTTL).UnixMilli()
-	path := s.signer.PlayPath(hash, index, exp)
+	path := s.signer.PlayPath(hash, index, season, episode, exp)
 
 	host := s.set.PublicHost
 	scheme := "https"

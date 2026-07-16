@@ -157,20 +157,59 @@ type Indexer struct {
 	Protocol string `json:"protocol"`
 }
 
-// Search runs a query for the given categories, using the cache when warm. When
-// indexerIds is non-empty the search is limited to those indexers; otherwise
-// Prowlarr queries all enabled indexers.
+// maxCachedResults caps the accumulated per-query union so storage stays
+// bounded; when exceeded we keep the highest-seeded results.
+const maxCachedResults = 500
+
+// Search runs a query and returns the accumulating union of previously cached
+// results and a fresh live search. Each successful live search merges into the
+// cache (deduped) and refreshes its TTL, so repeated fetches of the same media
+// grab progressively more results as different indexers respond on different
+// runs. If the live search fails or is cut short (e.g. a per-query deadline),
+// the last cached union is returned rather than an error. When indexerIds is
+// non-empty the search is limited to those indexers; otherwise Prowlarr queries
+// all enabled indexers.
 func (c *Client) Search(ctx context.Context, query string, categories, indexerIds []int) ([]Result, error) {
 	start := time.Now()
 	key := cacheKey(query, categories, indexerIds)
-	if data, ok := c.cache.ProwlarrCacheGet(key); ok {
-		var cached []Result
-		if json.Unmarshal(data, &cached) == nil {
-			slog.DebugContext(ctx, "prowlarr cache hit", "query", query, "categories", categories, "results", len(cached))
+	cached := c.cachedResults(key)
+
+	live, err := c.searchLive(ctx, query, categories, indexerIds)
+	if err != nil {
+		if len(cached) > 0 {
+			slog.WarnContext(ctx, "prowlarr search live failed; serving cached union",
+				"query", query, "categories", categories, "cached", len(cached), "dur", time.Since(start), "err", err)
 			return cached, nil
 		}
+		slog.ErrorContext(ctx, "prowlarr search failed", "query", query, "categories", categories, "dur", time.Since(start), "err", err)
+		return nil, err
 	}
 
+	merged := mergeResults(live, cached, maxCachedResults)
+	slog.InfoContext(ctx, "prowlarr search", "query", query, "categories", categories, "indexers", indexerIds,
+		"results", len(merged), "live", len(live), "cached", len(cached), "dur", time.Since(start))
+
+	if enc, err := json.Marshal(merged); err == nil {
+		_ = c.cache.ProwlarrCacheSet(key, enc, c.ttl)
+	}
+	return merged, nil
+}
+
+// cachedResults returns the stored union for a key (empty if absent/undecodable).
+func (c *Client) cachedResults(key string) []Result {
+	data, ok := c.cache.ProwlarrCacheGet(key)
+	if !ok {
+		return nil
+	}
+	var cached []Result
+	if json.Unmarshal(data, &cached) != nil {
+		return nil
+	}
+	return cached
+}
+
+// searchLive performs one live Prowlarr search request.
+func (c *Client) searchLive(ctx context.Context, query string, categories, indexerIds []int) ([]Result, error) {
 	u, err := url.Parse(c.baseURL + "/api/v1/search")
 	if err != nil {
 		return nil, err
@@ -195,12 +234,10 @@ func (c *Client) Search(ctx context.Context, query string, categories, indexerId
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		slog.ErrorContext(ctx, "prowlarr search failed", "query", query, "categories", categories, "dur", time.Since(start), "err", err)
 		return nil, fmt.Errorf("prowlarr request: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		slog.ErrorContext(ctx, "prowlarr search bad status", "query", query, "categories", categories, "status", resp.StatusCode, "dur", time.Since(start))
 		return nil, fmt.Errorf("prowlarr status %d", resp.StatusCode)
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
@@ -216,13 +253,48 @@ func (c *Client) Search(ctx context.Context, query string, categories, indexerId
 	for _, r := range raw {
 		results = append(results, Result(r))
 	}
-
-	slog.InfoContext(ctx, "prowlarr search", "query", query, "categories", categories, "indexers", indexerIds, "results", len(results), "dur", time.Since(start))
-
-	if enc, err := json.Marshal(results); err == nil {
-		_ = c.cache.ProwlarrCacheSet(key, enc, c.ttl)
-	}
 	return results, nil
+}
+
+// mergeResults unions fresh and cached results, deduped by infohash/guid/title.
+// Fresh entries win on collision (fresher seeder counts). If the union exceeds
+// cap, it keeps the highest-seeded results.
+func mergeResults(fresh, cached []Result, cap int) []Result {
+	seen := make(map[string]bool, len(fresh)+len(cached))
+	merged := make([]Result, 0, len(fresh)+len(cached))
+	for _, r := range fresh {
+		k := resultKey(r)
+		if seen[k] {
+			continue
+		}
+		seen[k] = true
+		merged = append(merged, r)
+	}
+	for _, r := range cached {
+		k := resultKey(r)
+		if seen[k] {
+			continue
+		}
+		seen[k] = true
+		merged = append(merged, r)
+	}
+	if cap > 0 && len(merged) > cap {
+		sort.Slice(merged, func(i, j int) bool { return merged[i].Seeders > merged[j].Seeders })
+		merged = merged[:cap]
+	}
+	return merged
+}
+
+// resultKey is the dedupe identity: infohash, else guid, else lowercased title.
+func resultKey(r Result) string {
+	switch {
+	case r.InfoHash != "":
+		return "h:" + strings.ToLower(strings.TrimSpace(r.InfoHash))
+	case r.GUID != "":
+		return "g:" + r.GUID
+	default:
+		return "t:" + strings.ToLower(strings.TrimSpace(r.Title))
+	}
 }
 
 // cacheKey hashes the normalised query + categories + selected indexer ids, so

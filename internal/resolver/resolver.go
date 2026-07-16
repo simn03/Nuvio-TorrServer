@@ -5,6 +5,8 @@ package resolver
 
 import (
 	"context"
+	"crypto/sha1"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -22,6 +24,13 @@ import (
 	"github.com/simn03/nuvio-p2p-http-addon/internal/torrserver"
 )
 
+// EnrichCache memoizes play-time file selection so seeks/replays of a season
+// pack don't re-poll TorrServer for its file list. Keyed by hash+season+episode.
+type EnrichCache interface {
+	EnrichCacheGet(key string) (int, bool)
+	EnrichCacheSet(key string, index int, ttl time.Duration) error
+}
+
 // Resolver wires the metadata and search clients.
 type Resolver struct {
 	cine    *cinemeta.Client
@@ -34,31 +43,68 @@ type Resolver struct {
 	// file list before falling back. Overridable in tests.
 	fileWait    time.Duration
 	concurrency int
+	// searchTimeout bounds each individual Prowlarr query so one slow indexer
+	// can't hold the whole stream response.
+	searchTimeout time.Duration
+	enrichCache   EnrichCache
 }
 
 const movieFileWaitCap = 6 * time.Second
-const addWaitCap = 6 * time.Second
 
-// New builds a Resolver. ts/sweeper may be nil when only the pure ranking path
-// (Candidates) is used, e.g. in tests.
-func New(cine *cinemeta.Client, prow *prowlarr.Client, ts *torrserver.Client, sweeper *torrserver.Sweeper, preload bool) *Resolver {
-	return &Resolver{
-		cine:        cine,
-		prow:        prow,
-		ts:          ts,
-		sweeper:     sweeper,
-		preload:     preload,
-		fileWait:    8 * time.Second,
-		concurrency: 4,
+// enrichCacheTTL is long because a torrent's file layout is fixed for the life
+// of its infohash; a swept-and-readded torrent keeps the same file indices.
+const enrichCacheTTL = 30 * 24 * time.Hour
+
+// AutoSelectFile is the sentinel file index meaning "resolve the episode's file
+// at /play time" (used for deferred season packs). TorrServer file ids are
+// 1-based, so 0 is safe as a sentinel.
+const AutoSelectFile = 0
+
+// Option customises a Resolver at construction.
+type Option func(*Resolver)
+
+// WithSearchTimeout sets the per-query Prowlarr deadline (0 leaves the default).
+func WithSearchTimeout(d time.Duration) Option {
+	return func(r *Resolver) {
+		if d > 0 {
+			r.searchTimeout = d
+		}
 	}
 }
 
-// Stream is a playable result: a ranked candidate resolved to a specific
-// TorrServer torrent hash and file index.
+// WithEnrichCache wires a cache for play-time file selection.
+func WithEnrichCache(c EnrichCache) Option {
+	return func(r *Resolver) { r.enrichCache = c }
+}
+
+// New builds a Resolver. ts/sweeper may be nil when only the pure ranking path
+// (Candidates) is used, e.g. in tests.
+func New(cine *cinemeta.Client, prow *prowlarr.Client, ts *torrserver.Client, sweeper *torrserver.Sweeper, preload bool, opts ...Option) *Resolver {
+	r := &Resolver{
+		cine:          cine,
+		prow:          prow,
+		ts:            ts,
+		sweeper:       sweeper,
+		preload:       preload,
+		fileWait:      8 * time.Second,
+		concurrency:   4,
+		searchTimeout: 12 * time.Second,
+	}
+	for _, opt := range opts {
+		opt(r)
+	}
+	return r
+}
+
+// Stream is a playable result: a ranked candidate resolved to a TorrServer
+// torrent hash and file index. When FileIndex is AutoSelectFile the file is
+// picked at /play time using Season/Episode (deferred season packs).
 type Stream struct {
 	Candidate rank.Candidate
 	Hash      string
 	FileIndex int
+	Season    int // requested season, for deferred selection (0 otherwise)
+	Episode   int // requested episode, for deferred selection (0 otherwise)
 }
 
 // MediaID is a parsed Stremio stream id.
@@ -183,36 +229,81 @@ func (r *Resolver) Resolve(ctx context.Context, kind, id string, cfg config.User
 	return out, nil
 }
 
-// enrich adds one candidate to TorrServer and selects its file index.
+// enrich turns a ranked candidate into a playable Stream without ever blocking
+// on TorrServer: no network at stream-list time. Real-infohash candidates
+// (movies, exact episodes, season packs) register their add-link under the real
+// hash. No-infohash candidates (downloadUrl-only) register under a synthetic,
+// stable token derived from the link; /play adds via that link and learns the
+// real infohash on demand. Season packs additionally get the AutoSelectFile
+// sentinel plus season/episode so /play picks the file once, when actually
+// played.
 func (r *Resolver) enrich(ctx context.Context, c rank.Candidate, mid MediaID) (Stream, error) {
 	start := time.Now()
 	link := c.Result.Link()
 	if link == "" {
 		return Stream{}, fmt.Errorf("no link")
 	}
-	if hash, ok := lazyPlayableHash(c, mid); ok {
-		r.ts.RegisterAddLink(hash, link)
-		slog.DebugContext(ctx, "resolve: candidate lazy registered", "title", c.Result.Title, "hash", hash, "file_index", 1, "dur", time.Since(start))
-		return Stream{Candidate: c, Hash: hash, FileIndex: 1}, nil
+
+	hash := prowlarr.NormalizeInfoHash(c.Result.InfoHash)
+	synthetic := hash == ""
+	if synthetic {
+		hash = syntheticHash(link)
 	}
-	addCtx, cancel := context.WithTimeout(ctx, r.addWaitForMedia(mid))
-	defer cancel()
-	hash, files, err := r.ts.Add(addCtx, link)
-	if err != nil {
-		return Stream{}, err
+	r.ts.RegisterAddLink(hash, link)
+	s := r.plan(c, mid, hash)
+	slog.DebugContext(ctx, "resolve: candidate registered", "title", c.Result.Title, "hash", hash, "synthetic", synthetic, "file_index", s.FileIndex, "dur", time.Since(start))
+	return s, nil
+}
+
+// syntheticHash derives a stable, infohash-shaped token (40 hex chars) from a
+// link, used as the /play path token for no-infohash candidates.
+func syntheticHash(link string) string {
+	sum := sha1.Sum([]byte(link))
+	return hex.EncodeToString(sum[:])
+}
+
+// plan builds the Stream for a resolved hash, deferring season-pack file
+// selection to /play via the AutoSelectFile sentinel.
+func (r *Resolver) plan(c rank.Candidate, mid MediaID, hash string) Stream {
+	if deferSelection(c.Parsed, mid) {
+		return Stream{Candidate: c, Hash: hash, FileIndex: AutoSelectFile, Season: mid.Season, Episode: mid.Episode}
 	}
-	if len(files) == 0 {
-		if shouldWaitForFiles(c.Parsed, mid) {
-			files, _ = r.ts.EnsureFiles(ctx, hash, r.fileWaitForMedia(mid))
-		} else {
-			slog.DebugContext(ctx, "resolve: exact episode release; skipping file wait", "title", c.Result.Title, "hash", hash)
+	return Stream{Candidate: c, Hash: hash, FileIndex: 1}
+}
+
+// deferSelection reports whether the episode's file index can only be known
+// after TorrServer resolves the torrent's file list — i.e. a series season pack
+// (or a release whose title doesn't pin the exact requested episode). Movies and
+// exact-episode releases stream file index 1 directly.
+func deferSelection(p rank.Parsed, mid MediaID) bool {
+	return mid.Series && mid.Episode > 0 && shouldWaitForFiles(p, mid)
+}
+
+// PlayFileIndex resolves the concrete TorrServer file index for a deferred
+// season pack at /play time: it waits for the file list, picks the episode's
+// file, and memoizes the result so seeks/replays skip the poll. Falls back to
+// index 1 if the list can't be resolved.
+func (r *Resolver) PlayFileIndex(ctx context.Context, hash string, season, episode int) (int, error) {
+	key := enrichCacheKey(hash, season, episode)
+	if r.enrichCache != nil {
+		if idx, ok := r.enrichCache.EnrichCacheGet(key); ok {
+			return idx, nil
 		}
 	}
-
+	mid := MediaID{Series: true, Season: season, Episode: episode}
+	files, err := r.ts.EnsureFiles(ctx, hash, r.fileWaitForMedia(mid))
+	if err != nil {
+		return 1, err
+	}
 	index := selectFile(files, mid)
-	r.sweeper.Touch(hash)
-	slog.DebugContext(ctx, "resolve: candidate enriched", "title", c.Result.Title, "hash", hash, "file_index", index, "dur", time.Since(start))
-	return Stream{Candidate: c, Hash: hash, FileIndex: index}, nil
+	if len(files) > 0 && r.enrichCache != nil {
+		_ = r.enrichCache.EnrichCacheSet(key, index, enrichCacheTTL)
+	}
+	return index, nil
+}
+
+func enrichCacheKey(hash string, season, episode int) string {
+	return fmt.Sprintf("%s|%d|%d", strings.ToLower(hash), season, episode)
 }
 
 func (r *Resolver) fileWaitForMedia(mid MediaID) time.Duration {
@@ -222,41 +313,26 @@ func (r *Resolver) fileWaitForMedia(mid MediaID) time.Duration {
 	return movieFileWaitCap
 }
 
-func (r *Resolver) addWaitForMedia(mid MediaID) time.Duration {
-	if r.fileWait <= addWaitCap {
-		return r.fileWait
-	}
-	return addWaitCap
-}
-
-func lazyPlayableHash(c rank.Candidate, mid MediaID) (string, bool) {
-	switch {
-	case !mid.Series:
-		hash := prowlarr.NormalizeInfoHash(c.Result.InfoHash)
-		return hash, hash != ""
-	case shouldWaitForFiles(c.Parsed, mid):
-		return "", false
-	default:
-		hash := prowlarr.NormalizeInfoHash(c.Result.InfoHash)
-		return hash, hash != ""
-	}
-}
-
 func (r *Resolver) preloadTop(ctx context.Context, streams []Stream) {
 	if !r.preload || len(streams) == 0 {
 		return
 	}
 	s := streams[0]
+	if s.FileIndex == AutoSelectFile {
+		// File not chosen yet (deferred pack); nothing concrete to preload.
+		return
+	}
 	go func() {
 		pctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
-		if err := r.ts.EnsureAdded(pctx, s.Hash); err != nil {
+		hash, err := r.ts.EnsureAdded(pctx, s.Hash)
+		if err != nil {
 			return
 		}
-		if err := r.ts.Preload(pctx, s.Hash, s.FileIndex); err != nil {
+		if err := r.ts.Preload(pctx, hash, s.FileIndex); err != nil {
 			return
 		}
-		slog.DebugContext(pctx, "resolve: top stream preloaded", "hash", s.Hash, "file_index", s.FileIndex)
+		slog.DebugContext(pctx, "resolve: top stream preloaded", "hash", hash, "file_index", s.FileIndex)
 	}()
 }
 
@@ -338,7 +414,9 @@ func (r *Resolver) searchAll(ctx context.Context, queries []string, cats, indexe
 		go func(i int, q string) {
 			defer wg.Done()
 			qStart := time.Now()
-			res, err := r.prow.Search(ctx, q, cats, indexerIds)
+			qctx, cancel := context.WithTimeout(ctx, r.searchTimeout)
+			defer cancel()
+			res, err := r.prow.Search(qctx, q, cats, indexerIds)
 			if err != nil {
 				slog.WarnContext(ctx, "resolve: query failed", "query", q, "dur", time.Since(qStart), "err", err)
 				errs[i] = err

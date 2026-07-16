@@ -58,7 +58,7 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	streams := make([]stream, 0, len(resolved))
 	for _, rs := range resolved {
 		streams = append(streams, stream{
-			URL:   s.buildPlayURL(r, rs.Hash, rs.FileIndex),
+			URL:   s.buildPlayURL(r, rs.Hash, rs.FileIndex, rs.Season, rs.Episode),
 			Name:  streamName(rs.Candidate),
 			Title: streamTitle(rs.Candidate),
 			BehaviorHints: &streamBehaviorHints{
