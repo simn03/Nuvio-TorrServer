@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"mime"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"path/filepath"
 	"strconv"
 	"time"
 
@@ -71,6 +73,30 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 		index = resolved
 	}
 
+	// TorrServer's stream endpoint has no HEAD handler. Answer from metadata
+	// rather than forwarding HEAD (405) or downloading a GET body for a HEAD.
+	if r.Method == http.MethodHead {
+		files, err := s.torr.EnsureFiles(r.Context(), realHash, 10*time.Second)
+		if err != nil {
+			http.Error(w, "metadata unavailable", http.StatusBadGateway)
+			return
+		}
+		for _, f := range files {
+			if f.ID == index {
+				typ := mime.TypeByExtension(filepath.Ext(f.Path))
+				if typ == "" {
+					typ = "application/octet-stream"
+				}
+				w.Header().Set("Content-Type", typ)
+				w.Header().Set("Content-Length", strconv.FormatInt(f.Length, 10))
+				w.Header().Set("Accept-Ranges", "bytes")
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+		}
+		http.Error(w, "file metadata unavailable", http.StatusServiceUnavailable)
+		return
+	}
 	// Update last-access so the sweeper keeps this torrent alive while playing.
 	s.sweeper.Touch(realHash)
 

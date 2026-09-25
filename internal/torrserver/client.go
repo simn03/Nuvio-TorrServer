@@ -30,6 +30,9 @@ type Client struct {
 	http    *http.Client
 	mu      sync.RWMutex
 	addLink map[string]string
+	// Serialize lazy adds so concurrent player requests reuse the same torrent.
+	addMu sync.Mutex
+	added map[string]string
 }
 
 // New builds a client for the given internal base URL (e.g. http://127.0.0.1:8090).
@@ -38,6 +41,7 @@ func New(baseURL string) *Client {
 		baseURL: strings.TrimSuffix(baseURL, "/"),
 		http:    &http.Client{Timeout: 30 * time.Second},
 		addLink: make(map[string]string),
+		added:   make(map[string]string),
 	}
 }
 
@@ -132,6 +136,14 @@ func (c *Client) RegisterAddLink(hash, link string) {
 // returned unchanged.
 func (c *Client) EnsureAdded(ctx context.Context, hash string) (string, error) {
 	key := strings.ToLower(strings.TrimSpace(hash))
+	c.addMu.Lock()
+	defer c.addMu.Unlock()
+	if real := c.added[key]; real != "" {
+		if t, err := c.action(ctx, map[string]any{"action": "get", "hash": real}); err == nil && t.Hash != "" {
+			return real, nil
+		}
+		delete(c.added, key)
+	}
 	c.mu.RLock()
 	link := c.addLink[key]
 	c.mu.RUnlock()
@@ -150,6 +162,8 @@ func (c *Client) EnsureAdded(ctx context.Context, hash string) (string, error) {
 		// too so repeat plays and the sweeper resolve consistently.
 		c.RegisterAddLink(addedHash, link)
 	}
+	c.added[key] = addedHash
+	c.added[strings.ToLower(addedHash)] = addedHash
 	return addedHash, nil
 }
 

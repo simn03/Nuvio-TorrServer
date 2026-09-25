@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -154,5 +156,76 @@ func TestStreamURL(t *testing.T) {
 	want := "http://127.0.0.1:8090/stream/stream?link=abc+def&index=6&play"
 	if got != want {
 		t.Errorf("StreamURL = %q, want %q", got, want)
+	}
+}
+
+func TestConcurrentEnsureAdded(t *testing.T) {
+	var adds atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if body["action"] == "add" {
+			adds.Add(1)
+			if body["link"] != "https://example.test/file.torrent" {
+				t.Error("lost source link")
+			}
+		}
+		_ = json.NewEncoder(w).Encode(torrent{Hash: "realhash"})
+	}))
+	defer srv.Close()
+	c := New(srv.URL)
+	c.RegisterAddLink("synthetic", "https://example.test/file.torrent")
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			h, err := c.EnsureAdded(context.Background(), "synthetic")
+			if err != nil || h != "realhash" {
+				t.Errorf("resolve: %s %v", h, err)
+			}
+		}()
+	}
+	wg.Wait()
+	if adds.Load() != 1 {
+		t.Fatalf("added %d times", adds.Load())
+	}
+}
+
+func TestEnsureAddedReaddsEvictedTorrent(t *testing.T) {
+	var adds atomic.Int32
+	var present atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if body["action"] == "add" {
+			adds.Add(1)
+			present.Store(true)
+		}
+		if !present.Load() {
+			http.Error(w, "torrent not found", http.StatusNotFound)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(torrent{Hash: "realhash"})
+	}))
+	defer srv.Close()
+	c := New(srv.URL)
+	c.RegisterAddLink("synthetic", "https://example.test/file.torrent")
+	for _, key := range []string{"synthetic", "realhash", "synthetic"} {
+		h, err := c.EnsureAdded(context.Background(), key)
+		if err != nil || h != "realhash" {
+			t.Fatalf("EnsureAdded(%q) = %q, %v", key, h, err)
+		}
+	}
+	if adds.Load() != 1 {
+		t.Fatalf("added %d times before eviction", adds.Load())
+	}
+	present.Store(false)
+	h, err := c.EnsureAdded(context.Background(), "synthetic")
+	if err != nil || h != "realhash" {
+		t.Fatalf("re-add = %q, %v", h, err)
+	}
+	if adds.Load() != 2 {
+		t.Fatalf("added %d times after eviction", adds.Load())
 	}
 }

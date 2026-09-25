@@ -32,6 +32,7 @@ func newPlayServer(upstreamURL string) *Server {
 func playRouter(s *Server) http.Handler {
 	r := chi.NewRouter()
 	r.Get("/play/{hash}/{idx}", s.handlePlay)
+	r.Head("/play/{hash}/{idx}", s.handlePlay)
 	return r
 }
 
@@ -80,22 +81,26 @@ func TestPlayRejectsBadSigAndExpiry(t *testing.T) {
 	defer upstream.Close()
 	s := newPlayServer(upstream.URL)
 
-	// Bad signature -> 403.
-	req := httptest.NewRequest(http.MethodGet, "/play/abchash/6?exp=99999999999999&sig=deadbeef", nil)
-	rec := httptest.NewRecorder()
-	playRouter(s).ServeHTTP(rec, req)
-	if rec.Code != http.StatusForbidden {
-		t.Errorf("bad sig status = %d, want 403", rec.Code)
-	}
+	for _, method := range []string{http.MethodGet, http.MethodHead} {
+		t.Run(method, func(t *testing.T) {
+			// Bad signature -> 403.
+			req := httptest.NewRequest(method, "/play/abchash/6?exp=99999999999999&sig=deadbeef", nil)
+			rec := httptest.NewRecorder()
+			playRouter(s).ServeHTTP(rec, req)
+			if rec.Code != http.StatusForbidden {
+				t.Errorf("bad sig status = %d, want 403", rec.Code)
+			}
 
-	// Valid signature but expired -> 410.
-	expired := time.Now().Add(-time.Minute).UnixMilli()
-	path := s.signer.PlayPath("abchash", 6, 0, 0, expired)
-	req = httptest.NewRequest(http.MethodGet, path, nil)
-	rec = httptest.NewRecorder()
-	playRouter(s).ServeHTTP(rec, req)
-	if rec.Code != http.StatusGone {
-		t.Errorf("expired status = %d, want 410", rec.Code)
+			// Valid signature but expired -> 410.
+			expired := time.Now().Add(-time.Minute).UnixMilli()
+			path := s.signer.PlayPath("abchash", 6, 0, 0, expired)
+			req = httptest.NewRequest(method, path, nil)
+			rec = httptest.NewRecorder()
+			playRouter(s).ServeHTTP(rec, req)
+			if rec.Code != http.StatusGone {
+				t.Errorf("expired status = %d, want 410", rec.Code)
+			}
+		})
 	}
 }
 
@@ -186,4 +191,21 @@ func contains(s, sub string) bool {
 		}
 	}
 	return false
+}
+
+func TestPlayHeadUsesMetadataWithoutStreaming(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/torrents" {
+			t.Error("HEAD started a stream")
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"hash": "realhash", "file_stats": []map[string]any{{"id": 1, "path": "film.mkv", "length": 123456}}})
+	}))
+	defer upstream.Close()
+	s := newPlayServer(upstream.URL)
+	path := s.signer.PlayPath("realhash", 1, 0, 0, time.Now().Add(time.Hour).UnixMilli())
+	rec := httptest.NewRecorder()
+	playRouter(s).ServeHTTP(rec, httptest.NewRequest(http.MethodHead, path, nil))
+	if rec.Code != 200 || rec.Header().Get("Content-Length") != "123456" || rec.Body.Len() != 0 {
+		t.Fatalf("HEAD: %d %v body=%d", rec.Code, rec.Header(), rec.Body.Len())
+	}
 }

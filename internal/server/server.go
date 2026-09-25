@@ -85,6 +85,7 @@ func (s *Server) routes() http.Handler {
 
 	// Signed play proxy — not under /u/*; guarded by HMAC + expiry.
 	r.Get("/play/{hash}/{idx}", s.handlePlay)
+	r.Head("/play/{hash}/{idx}", s.handlePlay)
 
 	return r
 }
