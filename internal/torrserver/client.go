@@ -29,20 +29,50 @@ type Client struct {
 	baseURL string
 	http    *http.Client
 	mu      sync.RWMutex
-	addLink map[string]string
-	// Serialize lazy adds so concurrent player requests reuse the same torrent.
-	addMu sync.Mutex
-	added map[string]string
+	addLink map[string]registeredLink
+	added   map[string]string
+	adding  map[string]*addLock
+	linkTTL time.Duration
+}
+
+type registeredLink struct {
+	url       string
+	expiresAt time.Time
+}
+
+// addLock serializes requests for one source without blocking other torrents.
+// refs includes the holder and waiters, so idle locks can be discarded.
+type addLock struct {
+	gate chan struct{}
+	refs int
+}
+
+// Option configures a Client.
+type Option func(*Client)
+
+// WithAddLinkTTL sets how long registered sources remain available for lazy adds.
+func WithAddLinkTTL(ttl time.Duration) Option {
+	return func(c *Client) {
+		if ttl > 0 {
+			c.linkTTL = ttl
+		}
+	}
 }
 
 // New builds a client for the given internal base URL (e.g. http://127.0.0.1:8090).
-func New(baseURL string) *Client {
-	return &Client{
+func New(baseURL string, opts ...Option) *Client {
+	c := &Client{
 		baseURL: strings.TrimSuffix(baseURL, "/"),
 		http:    &http.Client{Timeout: 30 * time.Second},
-		addLink: make(map[string]string),
+		addLink: make(map[string]registeredLink),
 		added:   make(map[string]string),
+		adding:  make(map[string]*addLock),
+		linkTTL: 6 * time.Hour,
 	}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
 }
 
 // torrent is the subset of TorrServer's torrent JSON we read.
@@ -125,7 +155,80 @@ func (c *Client) RegisterAddLink(hash, link string) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.addLink[hash] = link
+	expiresAt := time.Now().Add(c.linkTTL)
+	if previous := c.addLink[hash]; previous.expiresAt.After(expiresAt) {
+		expiresAt = previous.expiresAt
+	}
+	c.addLink[hash] = registeredLink{url: link, expiresAt: expiresAt}
+}
+
+// RetainAddLink keeps a registered source usable through a signed URL's expiry.
+// Issuing a URL can extend retention, but playback itself does not refresh it.
+func (c *Client) RetainAddLink(hash string, until time.Time) {
+	key := strings.ToLower(strings.TrimSpace(hash))
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.retainLinkLocked(key, until)
+	if real := c.added[key]; real != "" {
+		c.retainLinkLocked(strings.ToLower(real), until)
+	}
+}
+
+func (c *Client) retainLinkLocked(key string, until time.Time) {
+	if link, ok := c.addLink[key]; ok && until.After(link.expiresAt) {
+		link.expiresAt = until
+		c.addLink[key] = link
+	}
+}
+
+// PurgeExpiredLinks bounds both candidate source links and resolved aliases,
+// including candidates that were never played or tracked by the sweeper.
+func (c *Client) PurgeExpiredLinks(now time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for key, link := range c.addLink {
+		if !link.expiresAt.After(now) {
+			delete(c.addLink, key)
+			delete(c.added, key)
+		}
+	}
+}
+
+func (c *Client) lockAdd(ctx context.Context, key string) (func(), error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	c.mu.Lock()
+	lock := c.adding[key]
+	if lock == nil {
+		lock = &addLock{gate: make(chan struct{}, 1)}
+		c.adding[key] = lock
+	}
+	lock.refs++
+	c.mu.Unlock()
+	releaseRef := func() {
+		c.mu.Lock()
+		lock.refs--
+		if lock.refs == 0 {
+			delete(c.adding, key)
+		}
+		c.mu.Unlock()
+	}
+	select {
+	case <-ctx.Done():
+		releaseRef()
+		return nil, ctx.Err()
+	case lock.gate <- struct{}{}:
+		unlock := func() {
+			<-lock.gate
+			releaseRef()
+		}
+		if err := ctx.Err(); err != nil {
+			unlock()
+			return nil, err
+		}
+		return unlock, nil
+	}
 }
 
 // EnsureAdded adds a registered token to TorrServer and returns the torrent's
@@ -136,35 +239,69 @@ func (c *Client) RegisterAddLink(hash, link string) {
 // returned unchanged.
 func (c *Client) EnsureAdded(ctx context.Context, hash string) (string, error) {
 	key := strings.ToLower(strings.TrimSpace(hash))
-	c.addMu.Lock()
-	defer c.addMu.Unlock()
-	if real := c.added[key]; real != "" {
+	// Known aliases share a source lock, including a synthetic token and the
+	// real hash learned on its first add. Eviction must not race two re-adds.
+	c.mu.RLock()
+	lockKey := "hash:" + key
+	if link := c.addLink[key]; link.url != "" {
+		lockKey = "source:" + link.url
+	}
+	c.mu.RUnlock()
+	unlock, err := c.lockAdd(ctx, lockKey)
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
+	c.mu.RLock()
+	real := c.added[key]
+	link := c.addLink[key]
+	c.mu.RUnlock()
+	if !link.expiresAt.After(time.Now()) {
+		return hash, nil
+	}
+	if real != "" {
 		if t, err := c.action(ctx, map[string]any{"action": "get", "hash": real}); err == nil && t.Hash != "" {
 			return real, nil
 		}
-		delete(c.added, key)
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		c.mu.Lock()
+		c.invalidateAddedLocked(real)
+		c.mu.Unlock()
 	}
-	c.mu.RLock()
-	link := c.addLink[key]
-	c.mu.RUnlock()
-	if link == "" {
+	if link.url == "" {
 		return hash, nil
 	}
-	addedHash, _, err := c.Add(ctx, link)
+	addedHash, _, err := c.Add(ctx, link.url)
 	if err != nil {
 		return "", err
 	}
 	if addedHash == "" {
 		return hash, nil
 	}
-	if !strings.EqualFold(addedHash, key) {
-		// Synthetic token resolved to its real infohash; register the real hash
-		// too so repeat plays and the sweeper resolve consistently.
-		c.RegisterAddLink(addedHash, link)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	// A purge may have run while Add was in flight. Never resurrect expired
+	// links, and inherit the current source horizon without extending it.
+	if source, ok := c.addLink[key]; ok && source.expiresAt.After(time.Now()) {
+		realKey := strings.ToLower(addedHash)
+		alias := c.addLink[realKey]
+		if alias.expiresAt.Before(source.expiresAt) {
+			c.addLink[realKey] = source
+		}
+		c.added[key] = addedHash
+		c.added[realKey] = addedHash
 	}
-	c.added[key] = addedHash
-	c.added[strings.ToLower(addedHash)] = addedHash
 	return addedHash, nil
+}
+
+func (c *Client) invalidateAddedLocked(hash string) {
+	for key, real := range c.added {
+		if strings.EqualFold(real, hash) {
+			delete(c.added, key)
+		}
+	}
 }
 
 // Files returns the current file list for a hash (may be empty if metadata is
@@ -208,6 +345,11 @@ func (c *Client) EnsureFiles(ctx context.Context, hash string, wait time.Duratio
 // Remove deletes a torrent from TorrServer (used by the sweeper).
 func (c *Client) Remove(ctx context.Context, hash string) error {
 	_, err := c.action(ctx, map[string]any{"action": "rem", "hash": hash})
+	if err == nil {
+		c.mu.Lock()
+		c.invalidateAddedLocked(hash)
+		c.mu.Unlock()
+	}
 	return err
 }
 

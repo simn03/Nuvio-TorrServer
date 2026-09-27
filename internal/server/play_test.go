@@ -208,4 +208,7 @@ func TestPlayHeadUsesMetadataWithoutStreaming(t *testing.T) {
 	if rec.Code != 200 || rec.Header().Get("Content-Length") != "123456" || rec.Body.Len() != 0 {
 		t.Fatalf("HEAD: %d %v body=%d", rec.Code, rec.Header(), rec.Body.Len())
 	}
+	if got := rec.Header().Get("Content-Type"); got != "video/x-matroska" {
+		t.Errorf("HEAD Content-Type = %q, want video/x-matroska", got)
+	}
 }

@@ -329,6 +329,7 @@ func (r *Resolver) preloadTop(ctx context.Context, streams []Stream) {
 		if err != nil {
 			return
 		}
+		r.sweeper.Touch(hash)
 		if err := r.ts.Preload(pctx, hash, s.FileIndex); err != nil {
 			return
 		}

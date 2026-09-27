@@ -51,14 +51,20 @@ func (s *Sweeper) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			s.sweep(ctx, time.Now())
+			s.Sweep(ctx)
 		}
 	}
 }
 
-// sweep removes hashes idle beyond the TTL. Exposed logic kept small for testing.
+// Sweep performs one cleanup pass without waiting for the periodic ticker.
+func (s *Sweeper) Sweep(ctx context.Context) {
+	s.sweep(ctx, time.Now())
+}
+
+// sweep removes hashes idle beyond the TTL and expired lazy-add links.
 func (s *Sweeper) sweep(ctx context.Context, now time.Time) {
 	start := time.Now()
+	s.client.PurgeExpiredLinks(now)
 	var stale []string
 	s.mu.Lock()
 	tracked := len(s.lastSeen)
