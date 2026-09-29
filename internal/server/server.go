@@ -37,7 +37,7 @@ type Server struct {
 func New(set *settings.Settings, st *store.Store) *Server {
 	cine := cinemeta.New(set.CinemetaURL, st, set.CinemetaCacheTTL)
 	prow := prowlarr.New(set.ProwlarrURL, set.ProwlarrAPIKey, st, set.ProwlarrCacheTTL, set.ProwlarrInsecureTLS)
-	torr := torrserver.New(set.TorrServerURL)
+	torr := torrserver.New(set.TorrServerURL, torrserver.WithAddLinkTTL(set.PlayURLTTL))
 	sweeper := torrserver.NewSweeper(torr, set.TorrentIdleTTL)
 
 	s := &Server{
@@ -85,6 +85,7 @@ func (s *Server) routes() http.Handler {
 
 	// Signed play proxy — not under /u/*; guarded by HMAC + expiry.
 	r.Get("/play/{hash}/{idx}", s.handlePlay)
+	r.Head("/play/{hash}/{idx}", s.handlePlay)
 
 	return r
 }

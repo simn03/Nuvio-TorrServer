@@ -61,6 +61,9 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Track successful adds even when a probe or metadata lookup returns early.
+	s.sweeper.Touch(realHash)
+
 	// Deferred season pack: resolve the episode's file now (memoized), instead
 	// of blocking every candidate on TorrServer during stream-list generation.
 	if index == resolver.AutoSelectFile {
@@ -71,9 +74,26 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 		index = resolved
 	}
 
-	// Update last-access so the sweeper keeps this torrent alive while playing.
-	s.sweeper.Touch(realHash)
-
+	// TorrServer's stream endpoint has no HEAD handler. Answer from metadata
+	// rather than forwarding HEAD (405) or downloading a GET body for a HEAD.
+	if r.Method == http.MethodHead {
+		files, err := s.torr.EnsureFiles(r.Context(), realHash, 10*time.Second)
+		if err != nil {
+			http.Error(w, "metadata unavailable", http.StatusBadGateway)
+			return
+		}
+		for _, f := range files {
+			if f.ID == index {
+				w.Header().Set("Content-Type", mediaType(f.Path))
+				w.Header().Set("Content-Length", strconv.FormatInt(f.Length, 10))
+				w.Header().Set("Accept-Ranges", "bytes")
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+		}
+		http.Error(w, "file metadata unavailable", http.StatusServiceUnavailable)
+		return
+	}
 	target, err := url.Parse(s.torr.StreamURL(realHash, index))
 	if err != nil {
 		http.Error(w, "bad target", http.StatusInternalServerError)
@@ -109,6 +129,8 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 // except for deferred season packs, where /play needs them to pick the file.
 func (s *Server) buildPlayURL(r *http.Request, hash string, index, season, episode int) string {
 	exp := time.Now().Add(s.set.PlayURLTTL).UnixMilli()
+	// Idle torrent eviction must not discard the source of a still-valid URL.
+	s.torr.RetainAddLink(hash, time.UnixMilli(exp))
 	path := s.signer.PlayPath(hash, index, season, episode, exp)
 
 	host := s.set.PublicHost

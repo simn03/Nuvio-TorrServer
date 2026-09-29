@@ -60,3 +60,13 @@ func TestSweeperNilSafe(t *testing.T) {
 	var sw *Sweeper
 	sw.Touch("x") // must not panic
 }
+
+func TestSweeperExpiresUnplayedCandidates(t *testing.T) {
+	client := New("http://unused.test", WithAddLinkTTL(time.Hour))
+	client.RegisterAddLink("unplayed", "https://example.test/movie.torrent")
+	sw := NewSweeper(client, time.Minute)
+	sw.sweep(context.Background(), time.Now().Add(2*time.Hour))
+	if len(client.addLink) != 0 {
+		t.Fatal("unplayed candidate survived periodic cleanup")
+	}
+}
