@@ -174,9 +174,16 @@ So a release is just:
 git tag v1.2.0 && git push origin v1.2.0
 ```
 
-To put hand-written notes on the release (breaking changes, upgrade steps),
-commit `docs/releases/v1.2.0.md` before tagging. Its contents go at the top of
-the GitHub Release, followed by the auto-generated PR list.
+Release notes are assembled from up to two hand-written files, followed by the
+auto-generated PR list:
+
+1. `docs/releases/vX.Y.x.md`: breaking changes for the whole `X.Y` series. It
+   is repeated on **every** `vX.Y.*` release, so someone jumping from an older
+   series to any patch release still sees it. Create it when a minor release
+   breaks something (for example `v0.2.x.md` for 0.2), and leave it in place;
+   the next series starts its own file.
+2. `docs/releases/vX.Y.Z.md`: notes for that release only. Commit it before
+   tagging.
 
 The workflow authenticates to GHCR with the built-in `GITHUB_TOKEN`
 (`packages: write`); no extra secrets are required. The first published package
