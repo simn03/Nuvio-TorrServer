@@ -33,6 +33,8 @@ jobs:
       - name: Vulnerability scan
         uses: golang/govulncheck-action@v1
         with:
+          # Clear the action's default ('stable') so go.mod's version is used.
+          go-version-input: ''
           go-version-file: go.mod
           repo-checkout: false
 
