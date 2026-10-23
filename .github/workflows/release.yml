@@ -86,13 +86,26 @@ jobs:
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true
 
+      # Hand-written notes (breaking changes, upgrade steps) come from
+      # docs/releases/<tag>.md when present; generated PR notes follow them.
+      - name: Compose release notes
+        if: github.ref_type == 'tag'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          notes="docs/releases/${GITHUB_REF_NAME}.md"
+          {
+            if [[ -f "$notes" ]]; then cat "$notes"; echo; fi
+            echo '## Image'
+            echo '```sh'
+            echo "docker pull ${IMAGE}:${VERSION}"
+            echo '```'
+          } > "$RUNNER_TEMP/release-notes.md"
+
       - name: Create GitHub Release
         if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: true
           prerelease: ${{ contains(github.ref_name, '-') }}
-          body: |
-            ```sh
-            docker pull ${{ env.IMAGE }}:${{ steps.version.outputs.version }}
-            ```
+          body_path: ${{ runner.temp }}/release-notes.md

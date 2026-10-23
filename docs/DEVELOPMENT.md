@@ -174,6 +174,10 @@ So a release is just:
 git tag v1.2.0 && git push origin v1.2.0
 ```
 
+To put hand-written notes on the release (breaking changes, upgrade steps),
+commit `docs/releases/v1.2.0.md` before tagging. Its contents go at the top of
+the GitHub Release, followed by the auto-generated PR list.
+
 The workflow authenticates to GHCR with the built-in `GITHUB_TOKEN`
 (`packages: write`); no extra secrets are required. The first published package
 may need to be flipped to public (or granted to your users) in the repo's
