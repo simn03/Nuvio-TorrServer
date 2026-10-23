@@ -145,10 +145,11 @@ docker buildx build --platform linux/amd64,linux/arm64 -t <ref> .
 
 The Dockerfile cross-compiles the Go binary per target arch and selects the
 matching TorrServer release asset automatically (`TARGETARCH` →
-`TorrServer-linux-{amd64,arm64}`), verifying it against the pinned SHA-256. The
-addon version in the manifest comes from the `VERSION` build arg (release CI
-passes the git tag). Dependabot doesn't track the TorrServer binary — bump
-`TS_VERSION` (a base `MatriX.NNN` tag) and both checksums by hand.
+`TorrServer-linux-{amd64,arm64,arm7}`), verifying it against the pinned SHA-256.
+The manifest version defaults to `addonVersion` in `internal/server/manifest.go`;
+the `VERSION` build arg overrides it (release CI passes the git tag).
+Dependabot doesn't track the TorrServer binary — bump `TS_VERSION` (a base
+`MatriX.NNN` tag) and the checksums by hand.
 
 ## Release / CI flow
 

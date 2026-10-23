@@ -182,13 +182,14 @@ Back up `/data/addon` to preserve users and their settings.
 
 The image pins a verified TorrServer release via the `TS_VERSION` build arg
 (tags look like `MatriX.147`, **not** `vX.Y.Z`) and checks the downloaded binary
-against a pinned SHA-256 (`TS_SHA256_AMD64` / `TS_SHA256_ARM64`). The correct
-binary for the target CPU architecture (amd64 or arm64) is selected
-automatically at build.
+against a pinned SHA-256 (`TS_SHA256_AMD64` / `TS_SHA256_ARM64` /
+`TS_SHA256_ARM7`). The correct binary for the target CPU architecture (amd64,
+arm64, or 32-bit arm) is selected automatically at build; published images
+cover amd64 and arm64.
 
 Pin **base** tags (`MatriX.147`), not point releases (`MatriX.147.1`): upstream
 deletes superseded point releases, which breaks builds. To use a different
-release, pass the tag and its checksums (`gh release view <tag> -R
+release, pass the tag and the checksum for your architecture (`gh release view <tag> -R
 YouROK/TorrServer --json assets` lists each asset's `digest`):
 
 ```bash
