@@ -22,7 +22,8 @@ type behaviorHints struct {
 	ConfigurationRequired bool `json:"configurationRequired"`
 }
 
-const addonVersion = "0.1.0"
+// addonVersion is overridden at build time via -ldflags -X (see Dockerfile).
+var addonVersion = "0.2.0"
 
 func (s *Server) handleManifest(w http.ResponseWriter, _ *http.Request) {
 	m := manifest{

@@ -4,6 +4,7 @@
 package rank
 
 import (
+	"fmt"
 	"regexp"
 	"sort"
 	"strings"
@@ -49,10 +50,22 @@ var (
 	seasonWordRe         = regexp.MustCompile(`(?i)\bSeason\s*(\d{1,2})\b`)
 )
 
+// safePTNParse wraps ptn.Parse, which panics (slice out of range) on some
+// titles, e.g. a leading "[1080p] ..." tag. One bad indexer result must not
+// 500 the whole stream request, so a panic is treated as a parse failure.
+func safePTNParse(title string) (info *ptn.TorrentInfo, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			info, err = nil, fmt.Errorf("ptn: %v", r)
+		}
+	}()
+	return ptn.Parse(title)
+}
+
 // Parse extracts attributes from a release title.
 func Parse(title string) Parsed {
 	var p Parsed
-	if info, err := ptn.Parse(title); err == nil {
+	if info, err := safePTNParse(title); err == nil {
 		p.Resolution = normalizeResolution(info.Resolution)
 		p.Quality = info.Quality
 		p.Codec = info.Codec

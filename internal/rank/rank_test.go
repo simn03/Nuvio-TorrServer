@@ -51,6 +51,15 @@ func mk(title string, seeders int, sizeGB float64) prowlarr.Result {
 	}
 }
 
+// ptn.Parse panics on a leading bracketed tag; Parse must survive it (one such
+// Prowlarr result used to 500 the whole stream request).
+func TestParseSurvivesParserPanic(t *testing.T) {
+	p := Parse("[1080p] The Shawshank Redemption")
+	if p.Resolution != "unknown" {
+		t.Errorf("resolution = %q, want unknown", p.Resolution)
+	}
+}
+
 func TestRankFiltersAndSorts(t *testing.T) {
 	results := []prowlarr.Result{
 		mk("Movie 2020 2160p BluRay x265", 50, 30),   // 4k, hevc
