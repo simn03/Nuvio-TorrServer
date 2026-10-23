@@ -8,8 +8,8 @@ Torrentio-style, ranked stream list backed by your **own** TorrServer and your
 **no VPN or tunnel** and TorrServer never exposed to the internet.
 
 <p align="center">
-  <img alt="Container image" src="https://img.shields.io/badge/ghcr.io-nuvio--p2p--http--addon-2496ED?logo=docker&logoColor=white">
-  <img alt="Go" src="https://img.shields.io/badge/Go-1.23-00ADD8?logo=go&logoColor=white">
+  <img alt="Container image" src="https://img.shields.io/badge/ghcr.io-nuvio--torrserver-2496ED?logo=docker&logoColor=white">
+  <img alt="Go" src="https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white">
   <img alt="Single container" src="https://img.shields.io/badge/deploy-single%20container-success">
 </p>
 
@@ -60,8 +60,8 @@ The published multi-arch image (`linux/amd64`, `linux/arm64`) is the fastest pat
 
 ```bash
 mkdir nuvio-torrserver && cd nuvio-torrserver
-curl -fLO https://raw.githubusercontent.com/simn03/nuvio-p2p-http-addon/main/.env.example
-curl -fLO https://raw.githubusercontent.com/simn03/nuvio-p2p-http-addon/main/docker-compose.example.yml
+curl -fLO https://raw.githubusercontent.com/simn03/Nuvio-TorrServer/main/.env.example
+curl -fLO https://raw.githubusercontent.com/simn03/Nuvio-TorrServer/main/docker-compose.example.yml
 mv .env.example .env
 mv docker-compose.example.yml docker-compose.yml
 
@@ -76,7 +76,7 @@ In `docker-compose.yml`, use the published image instead of `build:`:
 ```yaml
 services:
   nuvio-torrserver:
-    image: ghcr.io/simn03/nuvio-p2p-http-addon:latest
+    image: ghcr.io/simn03/nuvio-torrserver:latest
 ```
 
 ```bash
@@ -87,7 +87,7 @@ docker compose logs -f     # confirm both torrserver and addon start
 ## Quick start (build from source)
 
 ```bash
-git clone https://github.com/simn03/nuvio-p2p-http-addon.git && cd nuvio-p2p-http-addon
+git clone https://github.com/simn03/Nuvio-TorrServer.git && cd Nuvio-TorrServer
 cp .env.example .env       # then edit (see above)
 cp docker-compose.example.yml docker-compose.yml   # then edit `networks:`
 docker compose up -d --build
@@ -181,12 +181,21 @@ Back up `/data/addon` to preserve users and their settings.
 ## TorrServer version
 
 The image pins a verified TorrServer release via the `TS_VERSION` build arg
-(tags look like `MatriX.142.1`, **not** `vX.Y.Z`). The correct TorrServer binary
-for the target CPU architecture is selected automatically at build. To use a
-different release:
+(tags look like `MatriX.147`, **not** `vX.Y.Z`) and checks the downloaded binary
+against a pinned SHA-256 (`TS_SHA256_AMD64` / `TS_SHA256_ARM64`). The correct
+binary for the target CPU architecture (amd64 or arm64) is selected
+automatically at build.
+
+Pin **base** tags (`MatriX.147`), not point releases (`MatriX.147.1`): upstream
+deletes superseded point releases, which breaks builds. To use a different
+release, pass the tag and its checksums (`gh release view <tag> -R
+YouROK/TorrServer --json assets` lists each asset's `digest`):
 
 ```bash
-docker compose build --build-arg TS_VERSION=MatriX.142.1
+docker compose build \
+  --build-arg TS_VERSION=MatriX.147 \
+  --build-arg TS_SHA256_AMD64=<sha256> \
+  --build-arg TS_SHA256_ARM64=<sha256>
 ```
 
 ## Development

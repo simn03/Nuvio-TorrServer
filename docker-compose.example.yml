@@ -4,7 +4,7 @@ services:
   nuvio-torrserver:
     build: .
     # Or use the prebuilt multi-arch image instead of build:
-    # image: ghcr.io/simn03/nuvio-p2p-http-addon:latest
+    # image: ghcr.io/simn03/nuvio-torrserver:latest
     container_name: nuvio-torrserver
     restart: unless-stopped
     env_file: .env

@@ -6,7 +6,7 @@ development, testing (including the live profiler), and the release flow.
 
 ## Prerequisites
 
-- **Go 1.23+** (the module targets `go 1.23`).
+- **Go 1.26+** (the module targets `go 1.26`).
 - **Docker + Buildx** for image builds.
 - A reachable **Prowlarr** and **TorrServer** only for the integration/profiling
   paths — the unit tests are fully offline.
@@ -145,16 +145,27 @@ docker buildx build --platform linux/amd64,linux/arm64 -t <ref> .
 
 The Dockerfile cross-compiles the Go binary per target arch and selects the
 matching TorrServer release asset automatically (`TARGETARCH` →
-`TorrServer-linux-{amd64,arm64,arm7}`).
+`TorrServer-linux-{amd64,arm64}`), verifying it against the pinned SHA-256. The
+addon version in the manifest comes from the `VERSION` build arg (release CI
+passes the git tag). Dependabot doesn't track the TorrServer binary — bump
+`TS_VERSION` (a base `MatriX.NNN` tag) and both checksums by hand.
 
 ## Release / CI flow
 
-`.github/workflows/docker-publish.yml`:
+- **`.github/workflows/ci.yml`** — every PR: `go vet`, `go test -race`,
+  `govulncheck`, and an amd64 image build + smoke test (no push), so Dockerfile
+  breakage fails the PR rather than the release.
+- **`.github/workflows/release.yml`** — reuses `ci.yml` as a gate, then:
+  - **push to `main`** publishes `ghcr.io/simn03/nuvio-torrserver:latest` and
+    `:sha-<short>` (linux/amd64 + linux/arm64);
+  - **push a tag `vX.Y.Z`** additionally publishes `:X.Y.Z` and `:X.Y` and
+    creates a GitHub Release with generated notes (tags containing `-`, e.g.
+    `v1.2.0-rc.1`, are marked pre-release).
 
-- **Every push / PR** runs `go vet` + `go test`.
-- **Push to `main`** publishes `ghcr.io/<owner>/<repo>:latest` and a
-  `:sha-<short>` tag (multi-arch).
-- **Push a tag `vX.Y.Z`** additionally publishes `:X.Y.Z` and `:X.Y`.
+  Every pushed image gets a signed build-provenance attestation
+  (`gh attestation verify oci://ghcr.io/simn03/nuvio-torrserver:<tag> -R simn03/Nuvio-TorrServer`).
+- **`.github/dependabot.yml`** — weekly grouped updates for Go modules, the
+  Docker base images, and GitHub Actions.
 
 So a release is just:
 
