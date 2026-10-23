@@ -22,21 +22,19 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
+      # Latest 1.26 patch (matches golang:1.26-alpine in the Dockerfile) so
+      # stdlib security fixes land without bumping go.mod.
       - uses: actions/setup-go@v7
         with:
-          go-version-file: go.mod
+          go-version: '1.26.x'
+          check-latest: true
           cache: true
       - name: Vet
         run: go vet ./...
       - name: Test
         run: go test -race ./...
       - name: Vulnerability scan
-        uses: golang/govulncheck-action@v1
-        with:
-          # Clear the action's default ('stable') so go.mod's version is used.
-          go-version-input: ''
-          go-version-file: go.mod
-          repo-checkout: false
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
   docker-build:
     runs-on: ubuntu-latest
