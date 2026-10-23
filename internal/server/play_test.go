@@ -212,3 +212,26 @@ func TestPlayHeadUsesMetadataWithoutStreaming(t *testing.T) {
 		t.Errorf("HEAD Content-Type = %q, want video/x-matroska", got)
 	}
 }
+
+// A torrent whose only file isn't a video (a fake .exe "episode") is refused
+// with 415 instead of being proxied to the player.
+func TestPlayRefusesTorrentWithoutVideo(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/torrents" {
+			t.Error("non-video torrent was streamed")
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"hash": "fakehash", "file_stats": []map[string]any{{"id": 1, "path": "Show S01E07 1080p WEB H264-GRP.exe", "length": 1270441586}}})
+	}))
+	defer upstream.Close()
+	s := newPlayServer(upstream.URL)
+	s.resolver = resolver.New(nil, nil, s.torr, s.sweeper, false)
+	path := s.signer.PlayPath("fakehash", 1, 0, 0, time.Now().Add(time.Hour).UnixMilli())
+
+	for _, method := range []string{http.MethodGet, http.MethodHead} {
+		rec := httptest.NewRecorder()
+		playRouter(s).ServeHTTP(rec, httptest.NewRequest(method, path, nil))
+		if rec.Code != http.StatusUnsupportedMediaType {
+			t.Errorf("%s status = %d, want 415", method, rec.Code)
+		}
+	}
+}

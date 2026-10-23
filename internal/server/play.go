@@ -64,14 +64,24 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 	// Track successful adds even when a probe or metadata lookup returns early.
 	s.sweeper.Touch(realHash)
 
-	// Deferred season pack: resolve the episode's file now (memoized), instead
-	// of blocking every candidate on TorrServer during stream-list generation.
-	if index == resolver.AutoSelectFile {
-		resolved, err := s.resolver.PlayFileIndex(r.Context(), realHash, season, episode)
-		if err != nil {
-			slog.WarnContext(r.Context(), "play: file selection fell back to 1", "hash", realHash, "season", season, "episode", episode, "err", err)
+	// Pick the file from the torrent's file list now (memoized) instead of
+	// blocking every candidate on TorrServer during stream-list generation: the
+	// episode's file for a deferred season pack, else the signed index unless
+	// it isn't a video. A torrent with no video at all (e.g. a fake release
+	// that is really an .exe) is refused instead of proxied to the player.
+	if s.resolver != nil {
+		resolved, err := s.resolver.PlayFileIndex(r.Context(), realHash, index, season, episode)
+		switch {
+		case errors.Is(err, resolver.ErrNoVideo):
+			slog.WarnContext(r.Context(), "play: torrent has no video file", "hash", realHash, "index", index)
+			http.Error(w, "torrent contains no playable video", http.StatusUnsupportedMediaType)
+			return
+		case err != nil:
+			slog.WarnContext(r.Context(), "play: file selection fell back", "hash", realHash, "index", resolved, "season", season, "episode", episode, "err", err)
 		}
 		index = resolved
+	} else if index == resolver.AutoSelectFile {
+		index = 1
 	}
 
 	// TorrServer's stream endpoint has no HEAD handler. Answer from metadata

@@ -86,16 +86,19 @@ jobs:
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true
 
-      # Hand-written notes (breaking changes, upgrade steps) come from
-      # docs/releases/<tag>.md when present; generated PR notes follow them.
+      # Release body, in order: docs/releases/vX.Y.x.md (breaking changes for
+      # the whole X.Y series, repeated on every X.Y.* release), then
+      # docs/releases/<tag>.md (this release), then generated PR notes.
       - name: Compose release notes
         if: github.ref_type == 'tag'
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          notes="docs/releases/${GITHUB_REF_NAME}.md"
+          series="${GITHUB_REF_NAME%.*}.x"   # v0.2.1 -> v0.2.x
           {
-            if [[ -f "$notes" ]]; then cat "$notes"; echo; fi
+            for notes in "docs/releases/${series}.md" "docs/releases/${GITHUB_REF_NAME}.md"; do
+              if [[ -f "$notes" ]]; then cat "$notes"; echo; fi
+            done
             echo '## Image'
             echo '```sh'
             echo "docker pull ${IMAGE}:${VERSION}"
