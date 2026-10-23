@@ -77,3 +77,17 @@ func TestPlayFileIndexKeepsVideoIndex(t *testing.T) {
 		t.Fatalf("PlayFileIndex = %d, %v; want 1, nil", got, err)
 	}
 }
+
+// Explicit indexes on the same torrent are memoized separately.
+func TestPlayFileIndexCachesPerExplicitIndex(t *testing.T) {
+	r := &Resolver{ts: filesServer(t, []map[string]any{
+		{"id": 3, "path": "Show.S01E03.mkv", "length": 100},
+		{"id": 5, "path": "Show.S01E05.mkv", "length": 100},
+	}), enrichCache: mapCache{}}
+
+	for _, want := range []int{3, 5, 3} {
+		if got, err := r.PlayFileIndex(context.Background(), "h", want, 0, 0); err != nil || got != want {
+			t.Fatalf("PlayFileIndex(index %d) = %d, %v", want, got, err)
+		}
+	}
+}

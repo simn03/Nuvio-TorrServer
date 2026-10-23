@@ -61,7 +61,7 @@ const enrichCacheTTL = 30 * 24 * time.Hour
 var ErrNoVideo = errors.New("torrent has no video file")
 
 // noVideoIndex is the enrich-cache value marking a torrent with no video file,
-// stored under the hash's season-0/episode-0 key so stream lists can drop it.
+// stored under noVideoKey so stream lists can drop it.
 const noVideoIndex = -1
 
 // AutoSelectFile is the sentinel file index meaning "resolve the episode's file
@@ -307,9 +307,11 @@ func (r *Resolver) PlayFileIndex(ctx context.Context, hash string, index, season
 	if fallback == AutoSelectFile {
 		fallback = 1
 	}
-	// Explicit-index play URLs carry no season/episode, so their selection is
-	// memoized under the 0/0 key, alongside the no-video marker.
 	key := enrichCacheKey(hash, season, episode)
+	if index != AutoSelectFile {
+		// Explicit-index URLs carry no season/episode; key on the index itself.
+		key = fmt.Sprintf("%s|index|%d", strings.ToLower(hash), index)
+	}
 	if r.enrichCache != nil {
 		if r.knownNoVideo(hash) {
 			return 0, ErrNoVideo
@@ -328,7 +330,7 @@ func (r *Resolver) PlayFileIndex(ctx context.Context, hash string, index, season
 	}
 	if !hasVideo(files) {
 		if r.enrichCache != nil {
-			_ = r.enrichCache.EnrichCacheSet(enrichCacheKey(hash, 0, 0), noVideoIndex, enrichCacheTTL)
+			_ = r.enrichCache.EnrichCacheSet(noVideoKey(hash), noVideoIndex, enrichCacheTTL)
 		}
 		return 0, ErrNoVideo
 	}
@@ -347,9 +349,11 @@ func (r *Resolver) knownNoVideo(hash string) bool {
 	if r.enrichCache == nil {
 		return false
 	}
-	idx, ok := r.enrichCache.EnrichCacheGet(enrichCacheKey(hash, 0, 0))
+	idx, ok := r.enrichCache.EnrichCacheGet(noVideoKey(hash))
 	return ok && idx == noVideoIndex
 }
+
+func noVideoKey(hash string) string { return strings.ToLower(hash) + "|novideo" }
 
 func enrichCacheKey(hash string, season, episode int) string {
 	return fmt.Sprintf("%s|%d|%d", strings.ToLower(hash), season, episode)
