@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/sha1"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -54,6 +55,14 @@ const movieFileWaitCap = 6 * time.Second
 // enrichCacheTTL is long because a torrent's file layout is fixed for the life
 // of its infohash; a swept-and-readded torrent keeps the same file indices.
 const enrichCacheTTL = 30 * 24 * time.Hour
+
+// ErrNoVideo means a torrent's file list holds no video file at all, e.g. a
+// fake release whose only file is an .exe posing as an episode.
+var ErrNoVideo = errors.New("torrent has no video file")
+
+// noVideoIndex is the enrich-cache value marking a torrent with no video file,
+// stored under the hash's season-0/episode-0 key so stream lists can drop it.
+const noVideoIndex = -1
 
 // AutoSelectFile is the sentinel file index meaning "resolve the episode's file
 // at /play time" (used for deferred season packs). TorrServer file ids are
@@ -217,12 +226,18 @@ func (r *Resolver) Resolve(ctx context.Context, kind, id string, cfg config.User
 	}
 	wg.Wait()
 
-	// Preserve ranking order, dropping candidates that failed to resolve.
+	// Preserve ranking order, dropping candidates that failed to resolve or
+	// were already found (at /play or preload) to contain no video.
 	out := make([]Stream, 0, len(candidates))
 	for i := range streams {
-		if ok[i] {
-			out = append(out, streams[i])
+		if !ok[i] {
+			continue
 		}
+		if r.knownNoVideo(streams[i].Hash) {
+			slog.InfoContext(ctx, "resolve: candidate dropped", "title", streams[i].Candidate.Result.Title, "hash", streams[i].Hash, "err", ErrNoVideo)
+			continue
+		}
+		out = append(out, streams[i])
 	}
 	r.preloadTop(ctx, out)
 	slog.InfoContext(ctx, "resolve: complete", "id", id, "candidates", len(candidates), "streams", len(out), "dur", time.Since(start))
@@ -279,27 +294,61 @@ func deferSelection(p rank.Parsed, mid MediaID) bool {
 	return mid.Series && mid.Episode > 0 && shouldWaitForFiles(p, mid)
 }
 
-// PlayFileIndex resolves the concrete TorrServer file index for a deferred
-// season pack at /play time: it waits for the file list, picks the episode's
-// file, and memoizes the result so seeks/replays skip the poll. Falls back to
-// index 1 if the list can't be resolved.
-func (r *Resolver) PlayFileIndex(ctx context.Context, hash string, season, episode int) (int, error) {
+// PlayFileIndex resolves the TorrServer file index /play streams. For a
+// deferred season pack (index AutoSelectFile) it picks the episode's file. An
+// explicit index is kept when it is a video file and otherwise replaced by the
+// best video, since file 1 is not always the video (e.g. a .srt or .nfo).
+// Returns ErrNoVideo when the torrent holds no video at all, and records that
+// so later stream lists drop it. Results are memoized so seeks/replays skip the
+// poll; if the file list can't be resolved, falls back to the requested index
+// (1 for a pack).
+func (r *Resolver) PlayFileIndex(ctx context.Context, hash string, index, season, episode int) (int, error) {
+	fallback := index
+	if fallback == AutoSelectFile {
+		fallback = 1
+	}
+	// Explicit-index play URLs carry no season/episode, so their selection is
+	// memoized under the 0/0 key, alongside the no-video marker.
 	key := enrichCacheKey(hash, season, episode)
 	if r.enrichCache != nil {
+		if r.knownNoVideo(hash) {
+			return 0, ErrNoVideo
+		}
 		if idx, ok := r.enrichCache.EnrichCacheGet(key); ok {
 			return idx, nil
 		}
 	}
-	mid := MediaID{Series: true, Season: season, Episode: episode}
+	mid := MediaID{Series: season > 0 || episode > 0, Season: season, Episode: episode}
 	files, err := r.ts.EnsureFiles(ctx, hash, r.fileWaitForMedia(mid))
 	if err != nil {
-		return 1, err
+		return fallback, err
 	}
-	index := selectFile(files, mid)
-	if len(files) > 0 && r.enrichCache != nil {
-		_ = r.enrichCache.EnrichCacheSet(key, index, enrichCacheTTL)
+	if len(files) == 0 {
+		return fallback, nil
 	}
-	return index, nil
+	if !hasVideo(files) {
+		if r.enrichCache != nil {
+			_ = r.enrichCache.EnrichCacheSet(enrichCacheKey(hash, 0, 0), noVideoIndex, enrichCacheTTL)
+		}
+		return 0, ErrNoVideo
+	}
+	selected := index
+	if index == AutoSelectFile || !isVideoFile(files, index) {
+		selected = selectFile(files, mid)
+	}
+	if r.enrichCache != nil {
+		_ = r.enrichCache.EnrichCacheSet(key, selected, enrichCacheTTL)
+	}
+	return selected, nil
+}
+
+// knownNoVideo reports whether hash was already found to contain no video.
+func (r *Resolver) knownNoVideo(hash string) bool {
+	if r.enrichCache == nil {
+		return false
+	}
+	idx, ok := r.enrichCache.EnrichCacheGet(enrichCacheKey(hash, 0, 0))
+	return ok && idx == noVideoIndex
 }
 
 func enrichCacheKey(hash string, season, episode int) string {
@@ -330,10 +379,17 @@ func (r *Resolver) preloadTop(ctx context.Context, streams []Stream) {
 			return
 		}
 		r.sweeper.Touch(hash)
-		if err := r.ts.Preload(pctx, hash, s.FileIndex); err != nil {
+		// Checking the file list here also flags a top result with no video
+		// (e.g. a fake .exe release) before anyone presses play.
+		index, err := r.PlayFileIndex(pctx, hash, s.FileIndex, 0, 0)
+		if errors.Is(err, ErrNoVideo) {
+			slog.WarnContext(pctx, "resolve: top stream has no video file", "hash", hash)
 			return
 		}
-		slog.DebugContext(pctx, "resolve: top stream preloaded", "hash", hash, "file_index", s.FileIndex)
+		if err := r.ts.Preload(pctx, hash, index); err != nil {
+			return
+		}
+		slog.DebugContext(pctx, "resolve: top stream preloaded", "hash", hash, "file_index", index)
 	}()
 }
 
@@ -463,6 +519,26 @@ var videoExts = map[string]bool{
 	".ts": true, ".wmv": true, ".flv": true, ".webm": true, ".mpg": true, ".mpeg": true,
 }
 
+func isVideoPath(p string) bool { return videoExts[strings.ToLower(path.Ext(p))] }
+
+func hasVideo(files []torrserver.File) bool {
+	for _, f := range files {
+		if isVideoPath(f.Path) {
+			return true
+		}
+	}
+	return false
+}
+
+func isVideoFile(files []torrserver.File, id int) bool {
+	for _, f := range files {
+		if f.ID == id {
+			return isVideoPath(f.Path)
+		}
+	}
+	return false
+}
+
 // selectFile picks the TorrServer file index (1-based id) to stream. For a
 // series episode it matches the requested S/E against each file name (season-
 // pack selection, §8 step 8); otherwise it picks the largest video file. Falls
@@ -480,8 +556,7 @@ func selectFile(files []torrserver.File, mid MediaID) int {
 	}
 	var vids []vf
 	for _, f := range files {
-		ext := strings.ToLower(path.Ext(f.Path))
-		if videoExts[ext] {
+		if isVideoPath(f.Path) {
 			vids = append(vids, vf{id: f.ID, size: f.Length, name: path.Base(f.Path)})
 		}
 	}

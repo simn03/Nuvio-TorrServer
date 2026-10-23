@@ -37,6 +37,8 @@ func TestPreloadTopRegistersAddedTorrentForCleanup(t *testing.T) {
 					switch body.Action {
 					case "add":
 						_ = json.NewEncoder(w).Encode(map[string]string{"hash": "realhash"})
+					case "get":
+						_ = json.NewEncoder(w).Encode(map[string]any{"hash": "realhash", "file_stats": []map[string]any{{"id": 1, "path": "film.mkv", "length": 1}}})
 					case "rem":
 						removed <- body.Hash
 					default:

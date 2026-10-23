@@ -277,6 +277,10 @@ func TestPrioritizeExactEpisodeBeforeSeasonPacks(t *testing.T) {
 func TestPreloadTopOnlyPreloadsFirstStream(t *testing.T) {
 	preloaded := make(chan string, 2)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/torrents" { // file-list check before preloading
+			_, _ = w.Write([]byte(`{"file_stats":[{"id":1,"path":"film.mkv","length":1}]}`))
+			return
+		}
 		if r.URL.Path != "/stream/stream" {
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
