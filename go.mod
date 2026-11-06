@@ -7,7 +7,7 @@ toolchain go1.26.10
 require (
 	github.com/go-chi/chi/v5 v5.5.0
 	github.com/middelink/go-parse-torrent-name v0.0.0-20190301154245-3ff4efacd4c4
-	modernc.org/sqlite v1.61.0
+	modernc.org/sqlite v1.61.1
 )
 
 require (
