@@ -4,7 +4,7 @@
 # BUILDPLATFORM/TARGETOS/TARGETARCH are provided automatically by BuildKit so a
 # single `docker buildx build --platform linux/amd64,linux/arm64` cross-compiles
 # without emulation. A plain `docker build` sets them to the host platform.
-FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS build
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS build
 ARG TARGETOS
 ARG TARGETARCH
 WORKDIR /src
